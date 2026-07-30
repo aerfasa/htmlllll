@@ -1,280 +1,151 @@
 const express = require('express');
 const multer = require('multer');
-const { nanoid } = require('nanoid');
-const path = require('path');
 const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const UPLOAD_DIR = path.join(__dirname, 'uploads');
 
-// ایجاد پوشه uploads اگر وجود نداره
-if (!fs.existsSync('uploads')) {
-  fs.mkdirSync('uploads');
+if (!fs.existsSync(UPLOAD_DIR)) {
+  fs.mkdirSync(UPLOAD_DIR);
 }
 
-// تنظیمات multer برای آپلود فایل
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, 'uploads/');
-  },
-  filename: (req, file, cb) => {
-    const uniqueId = nanoid(10);
-    cb(null, uniqueId + '.html');
-  }
+  destination: (req, file, cb) => cb(null, UPLOAD_DIR),
+  filename: (req, file, cb) => cb(null, crypto.randomUUID() + '.html')
 });
 
-const upload = multer({ 
-  storage: storage,
+const upload = multer({
+  storage,
   fileFilter: (req, file, cb) => {
-    if (file.mimetype === 'text/html' || file.originalname.endsWith('.html')) {
+    if (file.originalname.toLowerCase().endsWith('.html')) {
       cb(null, true);
     } else {
-      cb(new Error('فقط فایل HTML مجاز است!'));
+      cb(new Error('فقط فایل HTML مجاز است'));
     }
   }
 });
 
-app.use(express.static('public'));
-
-// صفحه اصلی
 app.get('/', (req, res) => {
   res.send(`
-    <!DOCTYPE html>
-    <html lang="fa" dir="rtl">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>آپلود فایل HTML</title>
-      <style>
-        * {
-          margin: 0;
-          padding: 0;
-          box-sizing: border-box;
-        }
-        body {
-          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-          min-height: 100vh;
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          padding: 20px;
-        }
-        .container {
-          background: white;
-          padding: 40px;
-          border-radius: 20px;
-          box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-          max-width: 500px;
-          width: 100%;
-        }
-        h1 {
-          color: #333;
-          margin-bottom: 10px;
-          text-align: center;
-        }
-        p {
-          color: #666;
-          margin-bottom: 30px;
-          text-align: center;
-        }
-        .upload-area {
-          border: 3px dashed #667eea;
-          border-radius: 15px;
-          padding: 40px;
-          text-align: center;
-          transition: all 0.3s;
-          cursor: pointer;
-          background: #f8f9ff;
-        }
-        .upload-area:hover {
-          border-color: #764ba2;
-          background: #f0f1ff;
-        }
-        .upload-area.dragover {
-          background: #e8e9ff;
-          border-color: #764ba2;
-        }
-        input[type="file"] {
-          display: none;
-        }
-        .upload-icon {
-          font-size: 50px;
-          margin-bottom: 15px;
-        }
-        button {
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-          color: white;
-          border: none;
-          padding: 15px 40px;
-          border-radius: 50px;
-          font-size: 16px;
-          cursor: pointer;
-          margin-top: 20px;
-          width: 100%;
-          font-weight: bold;
-          transition: transform 0.2s;
-        }
-        button:hover {
-          transform: translateY(-2px);
-        }
-        button:disabled {
-          opacity: 0.6;
-          cursor: not-allowed;
-        }
-        .result {
-          margin-top: 20px;
-          padding: 20px;
-          background: #e8f5e9;
-          border-radius: 10px;
-          display: none;
-        }
-        .result.show {
-          display: block;
-        }
-        .link {
-          color: #667eea;
-          word-break: break-all;
-          font-weight: bold;
-        }
-        .copy-btn {
-          background: #4caf50;
-          margin-top: 10px;
-          padding: 10px 20px;
-        }
-        .file-name {
-          margin-top: 15px;
-          color: #667eea;
-          font-weight: bold;
-        }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <h1>📤 آپلود فایل HTML</h1>
-        <p>فایل HTML خود را آپلود کنید و لینک دریافت کنید</p>
-        
-        <form id="uploadForm" enctype="multipart/form-data">
-          <div class="upload-area" id="uploadArea">
-            <div class="upload-icon">📄</div>
-            <p>فایل را اینجا بکشید یا کلیک کنید</p>
-            <input type="file" id="fileInput" name="htmlFile" accept=".html" required>
-            <div class="file-name" id="fileName"></div>
-          </div>
-          <button type="submit" id="submitBtn">آپلود و دریافت لینک 🚀</button>
-        </form>
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>آپلود HTML</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f3f4f6;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .box {
+      background: white;
+      padding: 30px;
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.1);
+      width: 90%;
+      max-width: 500px;
+      text-align: center;
+    }
+    input, button {
+      width: 100%;
+      padding: 12px;
+      margin-top: 12px;
+      box-sizing: border-box;
+    }
+    button {
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+    a {
+      display: block;
+      margin-top: 15px;
+      word-break: break-all;
+      color: #2563eb;
+    }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h2>فایل HTML خود را آپلود کنید</h2>
+    <form id="form">
+      <input type="file" id="file" accept=".html" required />
+      <button type="submit">آپلود</button>
+    </form>
+    <div id="result"></div>
+  </div>
 
-        <div class="result" id="result">
-          <p>✅ فایل با موفقیت آپلود شد!</p>
-          <p>لینک وبسایت شما:</p>
-          <a href="" target="_blank" class="link" id="fileLink"></a>
-          <button class="copy-btn" onclick="copyLink()">کپی لینک 📋</button>
-        </div>
-      </div>
+  <script>
+    const form = document.getElementById('form');
+    const file = document.getElementById('file');
+    const result = document.getElementById('result');
 
-      <script>
-        const uploadArea = document.getElementById('uploadArea');
-        const fileInput = document.getElementById('fileInput');
-        const fileName = document.getElementById('fileName');
-        const form = document.getElementById('uploadForm');
-        const result = document.getElementById('result');
-        const fileLink = document.getElementById('fileLink');
-        const submitBtn = document.getElementById('submitBtn');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
 
-        uploadArea.addEventListener('click', () => fileInput.click());
+      if (!file.files[0]) return;
 
-        fileInput.addEventListener('change', (e) => {
-          if (e.target.files.length > 0) {
-            fileName.textContent = '📄 ' + e.target.files[0].name;
-          }
-        });
+      const formData = new FormData();
+      formData.append('html', file.files[0]);
 
-        uploadArea.addEventListener('dragover', (e) => {
-          e.preventDefault();
-          uploadArea.classList.add('dragover');
-        });
+      const res = await fetch('/upload', {
+        method: 'POST',
+        body: formData
+      });
 
-        uploadArea.addEventListener('dragleave', () => {
-          uploadArea.classList.remove('dragover');
-        });
+      const data = await res.json();
 
-        uploadArea.addEventListener('drop', (e) => {
-          e.preventDefault();
-          uploadArea.classList.remove('dragover');
-          fileInput.files = e.dataTransfer.files;
-          if (fileInput.files.length > 0) {
-            fileName.textContent = '📄 ' + fileInput.files[0].name;
-          }
-        });
-
-        form.addEventListener('submit', async (e) => {
-          e.preventDefault();
-          
-          const formData = new FormData();
-          formData.append('htmlFile', fileInput.files[0]);
-
-          submitBtn.disabled = true;
-          submitBtn.textContent = 'در حال آپلود...';
-
-          try {
-            const response = await fetch('/upload', {
-              method: 'POST',
-              body: formData
-            });
-
-            const data = await response.json();
-
-            if (response.ok) {
-              fileLink.href = data.url;
-              fileLink.textContent = data.url;
-              result.classList.add('show');
-              submitBtn.textContent = 'آپلود موفقیت‌آمیز! ✅';
-            } else {
-              alert('خطا: ' + data.error);
-              submitBtn.disabled = false;
-              submitBtn.textContent = 'آپلود و دریافت لینک 🚀';
-            }
-          } catch (error) {
-            alert('خطا در آپلود فایل!');
-            submitBtn.disabled = false;
-            submitBtn.textContent = 'آپلود و دریافت لینک 🚀';
-          }
-        });
-
-        function copyLink() {
-          navigator.clipboard.writeText(fileLink.href);
-          alert('لینک کپی شد! ✅');
-        }
-      </script>
-    </body>
-    </html>
+      if (res.ok) {
+        result.innerHTML = '<p>لینک سایت شما:</p><a href="' + data.url + '" target="_blank">' + data.url + '</a>';
+      } else {
+        result.innerHTML = '<p style="color:red">' + data.error + '</p>';
+      }
+    });
+  </script>
+</body>
+</html>
   `);
 });
 
-app.post('/upload', upload.single('htmlFile'), (req, res) => {
+app.post('/upload', upload.single('html'), (req, res) => {
   if (!req.file) {
-    return res.status(400).json({ error: 'فایلی آپلود نشده!' });
+    return res.status(400).json({ error: 'فایلی انتخاب نشده' });
   }
 
-  const fileUrl = `${req.protocol}://${req.get('host')}/view/${req.file.filename.replace('.html', '')}`;
-  
-  res.json({ 
-    success: true, 
-    url: fileUrl,
-    filename: req.file.filename
+  const id = path.parse(req.file.filename).name;
+  const proto = req.headers['x-forwarded-proto'] || req.protocol;
+  const baseUrl = `${proto}://${req.get('host')}`;
+
+  res.json({
+    url: `${baseUrl}/view/${id}`
   });
 });
 
 app.get('/view/:id', (req, res) => {
-  const filePath = path.join(__dirname, 'uploads', req.params.id + '.html');
-  
-  if (fs.existsSync(filePath)) {
-    res.sendFile(filePath);
-  } else {
-    res.status(404).send('<h1>فایل پیدا نشد! 404</h1>');
+  const filePath = path.join(UPLOAD_DIR, req.params.id + '.html');
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).send('فایل پیدا نشد');
   }
+
+  res.sendFile(filePath);
+});
+
+app.use((err, req, res, next) => {
+  res.status(400).json({ error: err.message || 'خطا رخ داد' });
 });
 
 app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
+  console.log('Server running on ' + PORT);
 });
