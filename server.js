@@ -3,881 +3,340 @@ const session = require('express-session');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
+const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 app.set('trust proxy', 1);
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
+const DB_PATH = path.join(__dirname, 'db.json');
 
-if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR);
-}
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR);
+if (!fs.existsSync(DB_PATH)) fs.writeFileSync(DB_PATH, JSON.stringify({ panels: {} }));
 
-app.use(express.urlencoded({ extended: false }));
+const getDB = () => JSON.parse(fs.readFileSync(DB_PATH, 'utf-8'));
+const saveDB = (db) => fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
 
-app.use(
-  session({
-    secret: (process.env.SESSION_SECRET || 'change-this-secret').trim(),
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: 'auto',
-      maxAge: 1000 * 60 * 60 * 24 * 7
-    }
-  })
-);
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'nebula-secret-key',
+  resave: false, saveUninitialized: false,
+  cookie: { secure: 'auto', maxAge: 24 * 60 * 60 * 1000 }
+}));
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOAD_DIR),
-  filename: (req, file, cb) => cb(null, crypto.randomUUID() + '.html')
+  filename: (req, file, cb) => cb(null, req.panelId + '.html')
 });
+const upload = multer({ storage });
 
-const upload = multer({
-  storage,
-  fileFilter: (req, file, cb) => {
-    if (file.originalname.toLowerCase().endsWith('.html')) {
-      cb(null, true);
-    } else {
-      cb(new Error('فقط فایل HTML مجاز است'));
-    }
-  }
-});
-
-function layout(title, content, script = '') {
-  return `<!DOCTYPE html>
-<html lang="fa" dir="rtl">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${title}</title>
-  <style>
-    :root{
-      --bg:#05030f;
-      --glass: rgba(255,255,255,.07);
-      --glass-strong: rgba(255,255,255,.10);
-      --line: rgba(255,255,255,.12);
-      --text: #f8fafc;
-      --muted: rgba(255,255,255,.62);
-      --muted2: rgba(255,255,255,.42);
-      --accent1: #7c3aed;
-      --accent2: #d946ef;
-      --accent3: #22d3ee;
-      --accent4: #06b6d4;
-      --success: #10b981;
-      --danger: #ef4444;
-    }
-
-    * { box-sizing: border-box; }
-    html, body { height: 100%; }
-    body {
-      margin: 0;
-      color: var(--text);
-      background:
-        radial-gradient(circle at top left, rgba(124,58,237,.28), transparent 28%),
-        radial-gradient(circle at top right, rgba(217,70,239,.22), transparent 26%),
-        radial-gradient(circle at bottom right, rgba(34,211,238,.12), transparent 26%),
-        linear-gradient(135deg, #04020b 0%, #070816 45%, #05030f 100%);
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      overflow-x: hidden;
-    }
-
-    .aurora {
-      position: fixed;
-      inset: -20%;
-      pointer-events: none;
-      z-index: 0;
-      filter: blur(70px);
-      opacity: .75;
-    }
-    .aurora::before,
-    .aurora::after {
-      content: "";
-      position: absolute;
-      border-radius: 999px;
-      mix-blend-mode: screen;
-    }
-    .aurora::before {
-      width: 420px;
-      height: 420px;
-      left: 10%;
-      top: 8%;
-      background: radial-gradient(circle, rgba(124,58,237,.55), rgba(124,58,237,0) 70%);
-      animation: float1 10s ease-in-out infinite;
-    }
-    .aurora::after {
-      width: 520px;
-      height: 520px;
-      right: 8%;
-      bottom: 6%;
-      background: radial-gradient(circle, rgba(34,211,238,.42), rgba(34,211,238,0) 70%);
-      animation: float2 12s ease-in-out infinite;
-    }
-
-    .grid-bg {
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      z-index: 1;
-      opacity: .16;
-      background-image:
-        linear-gradient(rgba(255,255,255,.05) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,.05) 1px, transparent 1px);
-      background-size: 56px 56px;
-      mask-image: radial-gradient(circle at center, black 30%, transparent 88%);
-    }
-
-    .shell {
-      position: relative;
-      z-index: 2;
-      width: min(1200px, 100%);
-      margin: 0 auto;
-      padding: 24px;
-    }
-
-    .glass {
-      background: var(--glass);
-      border: 1px solid var(--line);
-      backdrop-filter: blur(18px);
-      -webkit-backdrop-filter: blur(18px);
-      box-shadow: 0 20px 70px rgba(0,0,0,.35);
-    }
-
-    .glass-strong {
-      background: var(--glass-strong);
-      border: 1px solid rgba(255,255,255,.14);
-      backdrop-filter: blur(22px);
-      -webkit-backdrop-filter: blur(22px);
-      box-shadow: 0 22px 80px rgba(0,0,0,.42);
-    }
-
-    .header {
-      position: sticky;
-      top: 18px;
-      z-index: 30;
-      border-radius: 24px;
-      padding: 16px 18px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 14px;
-      margin-bottom: 24px;
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      min-width: 0;
-    }
-    .logo {
-      width: 46px;
-      height: 46px;
-      border-radius: 16px;
-      display: grid;
-      place-items: center;
-      background: linear-gradient(135deg, var(--accent1), var(--accent2), var(--accent3));
-      box-shadow: 0 18px 35px rgba(124,58,237,.28);
-      flex: 0 0 auto;
-      font-size: 22px;
-    }
-    .brand h1 {
-      margin: 0;
-      font-size: 18px;
-      font-weight: 900;
-      line-height: 1.1;
-      letter-spacing: .2px;
-    }
-    .brand p {
-      margin: 4px 0 0;
-      color: var(--muted2);
-      font-size: 12px;
-    }
-
-    .header-actions {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 10px 14px;
-      border-radius: 999px;
-      background: rgba(255,255,255,.06);
-      border: 1px solid rgba(255,255,255,.08);
-      color: rgba(255,255,255,.78);
-      font-size: 13px;
-      text-decoration: none;
-    }
-
-    .dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 999px;
-      background: #34d399;
-      box-shadow: 0 0 0 6px rgba(52,211,153,.12);
-    }
-
-    .icon-btn,
-    .btn {
-      border: none;
-      cursor: pointer;
-      text-decoration: none;
-      color: white;
-      font-weight: 800;
-      transition: .2s transform ease, .2s opacity ease, .2s box-shadow ease, .2s background ease;
-    }
-
-    .icon-btn {
-      width: 46px;
-      height: 46px;
-      border-radius: 15px;
-      display: grid;
-      place-items: center;
-      background: rgba(255,255,255,.08);
-      border: 1px solid rgba(255,255,255,.08);
-    }
-    .icon-btn:hover { transform: translateY(-1px); background: rgba(255,255,255,.12); }
-
-    .btn {
-      width: 100%;
-      padding: 15px 18px;
-      border-radius: 18px;
-      background: linear-gradient(135deg, #7c3aed 0%, #d946ef 45%, #22d3ee 100%);
-      box-shadow: 0 18px 35px rgba(124,58,237,.22);
-      font-size: 16px;
-    }
-    .btn:hover { transform: translateY(-1px); box-shadow: 0 22px 42px rgba(124,58,237,.28); }
-    .btn:disabled { opacity: .65; cursor: not-allowed; transform: none; }
-
-    .btn-ghost {
-      padding: 12px 16px;
-      border-radius: 16px;
-      background: rgba(255,255,255,.07);
-      border: 1px solid rgba(255,255,255,.08);
-      color: white;
-      font-weight: 700;
-      cursor: pointer;
-    }
-
-    .text-gradient {
-      background: linear-gradient(135deg, #fff 0%, #c4b5fd 20%, #22d3ee 70%, #f472b6 100%);
-      -webkit-background-clip: text;
-      background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-
-    .muted { color: var(--muted); }
-    .muted2 { color: var(--muted2); }
-
-    .page-title {
-      margin: 0;
-      font-size: clamp(30px, 5vw, 54px);
-      line-height: 1.05;
-      letter-spacing: -.7px;
-      font-weight: 950;
-    }
-
-    .section {
-      margin-bottom: 22px;
-    }
-
-    .stats {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 14px;
-      margin: 18px 0 22px;
-    }
-    .stat {
-      padding: 18px;
-      border-radius: 22px;
-      position: relative;
-      overflow: hidden;
-    }
-    .stat::before {
-      content: "";
-      position: absolute;
-      inset: auto -30px -40px auto;
-      width: 120px;
-      height: 120px;
-      border-radius: 999px;
-      background: radial-gradient(circle, rgba(255,255,255,.10), transparent 70%);
-      pointer-events: none;
-    }
-    .stat .icon {
-      width: 44px;
-      height: 44px;
-      border-radius: 14px;
-      display: grid;
-      place-items: center;
-      margin-bottom: 14px;
-      background: linear-gradient(135deg, rgba(124,58,237,.95), rgba(217,70,239,.88));
-    }
-    .stat:nth-child(2) .icon { background: linear-gradient(135deg, rgba(34,211,238,.95), rgba(6,182,212,.88)); }
-    .stat:nth-child(3) .icon { background: linear-gradient(135deg, rgba(251,146,60,.95), rgba(244,63,94,.9)); }
-    .stat:nth-child(4) .icon { background: linear-gradient(135deg, rgba(16,185,129,.95), rgba(34,197,94,.9)); }
-
-    .stat .num {
-      font-size: 30px;
-      font-weight: 950;
-      line-height: 1;
-      margin-bottom: 6px;
-    }
-    .stat .label {
-      font-size: 12px;
-      color: rgba(255,255,255,.52);
-    }
-
-    .hero {
-      padding: 28px;
-      border-radius: 30px;
-      margin-bottom: 22px;
-      position: relative;
-      overflow: hidden;
-    }
-    .hero::after {
-      content: "";
-      position: absolute;
-      inset: -30%;
-      background: radial-gradient(circle at 30% 20%, rgba(124,58,237,.17), transparent 30%),
-                  radial-gradient(circle at 80% 80%, rgba(34,211,238,.12), transparent 22%);
-      pointer-events: none;
-    }
-
-    .hero-grid {
-      position: relative;
-      z-index: 1;
-      display: grid;
-      grid-template-columns: 1.1fr .9fr;
-      gap: 18px;
-      align-items: start;
-    }
-
-    .hero-card {
-      padding: 22px;
-      border-radius: 24px;
-      background: rgba(255,255,255,.05);
-      border: 1px solid rgba(255,255,255,.08);
-    }
-
-    .dropzone {
-      border: 1.5px dashed rgba(255,255,255,.2);
-      border-radius: 26px;
-      padding: 28px 18px;
-      text-align: center;
-      cursor: pointer;
-      background: rgba(255,255,255,.04);
-      transition: .2s ease;
-    }
-    .dropzone:hover,
-    .dropzone.dragover {
-      transform: translateY(-1px);
-      border-color: rgba(34,211,238,.8);
-      background: rgba(34,211,238,.08);
-    }
-
-    .drop-ico {
-      width: 78px;
-      height: 78px;
-      margin: 0 auto 14px;
-      border-radius: 24px;
-      display: grid;
-      place-items: center;
-      background: linear-gradient(135deg, rgba(124,58,237,.95), rgba(217,70,239,.9), rgba(34,211,238,.82));
-      box-shadow: 0 16px 34px rgba(124,58,237,.23);
-      font-size: 34px;
-      animation: bob 4s ease-in-out infinite;
-    }
-
-    .drop-title {
-      font-size: 20px;
-      font-weight: 900;
-      margin: 0 0 8px;
-    }
-    .drop-sub {
-      color: rgba(255,255,255,.5);
-      font-size: 13px;
-      margin-bottom: 6px;
-    }
-
-    .file-name {
-      min-height: 24px;
-      margin-top: 10px;
-      font-weight: 800;
-      color: #7dd3fc;
-      word-break: break-all;
-    }
-
-    .input {
-      width: 100%;
-      background: rgba(255,255,255,.06);
-      border: 1px solid rgba(255,255,255,.08);
-      border-radius: 18px;
-      padding: 15px 16px;
-      color: white;
-      font-size: 15px;
-      outline: none;
-    }
-    .input:focus {
-      border-color: rgba(34,211,238,.75);
-      box-shadow: 0 0 0 4px rgba(34,211,238,.14);
-    }
-
-    .stack { display: grid; gap: 12px; }
-
-    .result {
-      display: none;
-      margin-top: 16px;
-      border-radius: 20px;
-      padding: 18px;
-      border: 1px solid transparent;
-    }
-    .result.show { display: block; }
-    .result.success {
-      background: rgba(16,185,129,.12);
-      border-color: rgba(16,185,129,.25);
-    }
-    .result.error {
-      background: rgba(239,68,68,.12);
-      border-color: rgba(239,68,68,.25);
-    }
-    .result a {
-      color: #7dd3fc;
-      word-break: break-all;
-    }
-
-    .copy-btn {
-      margin-top: 10px;
-      width: auto;
-      padding: 11px 14px;
-      border-radius: 14px;
-      border: 1px solid rgba(255,255,255,.08);
-      background: rgba(255,255,255,.08);
-      color: white;
-      font-weight: 800;
-      cursor: pointer;
-    }
-
-    .tips {
-      margin: 0;
-      padding: 0 18px 0 0;
-      color: rgba(255,255,255,.72);
-      line-height: 2;
-    }
-
-    .login-wrap {
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      padding: 24px;
-    }
-
-    .login-card {
-      width: min(460px, 100%);
-      border-radius: 30px;
-      padding: 28px;
-    }
-
-    .login-top {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 18px;
-    }
-
-    .error {
-      margin-bottom: 14px;
-      padding: 12px 14px;
-      border-radius: 16px;
-      background: rgba(239,68,68,.14);
-      border: 1px solid rgba(239,68,68,.28);
-      color: #fecaca;
-    }
-
-    .hint {
-      margin-top: 14px;
-      font-size: 13px;
-      color: rgba(255,255,255,.45);
-      line-height: 1.8;
-    }
-
-    .fade-in-up {
-      animation: fadeUp .6s ease both;
-    }
-    .shine {
-      position: relative;
-      overflow: hidden;
-    }
-    .shine::after {
-      content: "";
-      position: absolute;
-      inset: -30% -60%;
-      background: linear-gradient(120deg, transparent 40%, rgba(255,255,255,.08) 50%, transparent 60%);
-      transform: translateX(-45%) rotate(8deg);
-      transition: .6s ease;
-      pointer-events: none;
-    }
-    .shine:hover::after {
-      transform: translateX(35%) rotate(8deg);
-    }
-
-    .float-y { animation: floatY 5s ease-in-out infinite; }
-
-    @keyframes fadeUp {
-      from { opacity: 0; transform: translateY(18px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    @keyframes float1 {
-      0%,100% { transform: translate(0,0) scale(1); }
-      50% { transform: translate(18px, 18px) scale(1.04); }
-    }
-    @keyframes float2 {
-      0%,100% { transform: translate(0,0) scale(1); }
-      50% { transform: translate(-18px, -10px) scale(1.05); }
-    }
-    @keyframes floatY {
-      0%,100% { transform: translateY(0); }
-      50% { transform: translateY(-8px); }
-    }
-    @keyframes bob {
-      0%,100% { transform: translateY(0); }
-      50% { transform: translateY(-5px); }
-    }
-
-    @media (max-width: 980px) {
-      .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .hero-grid { grid-template-columns: 1fr; }
-    }
-    @media (max-width: 640px) {
-      .shell { padding: 14px; }
-      .header { top: 10px; padding: 14px; border-radius: 20px; }
-      .stats { grid-template-columns: 1fr; }
-      .hero { padding: 18px; border-radius: 24px; }
-      .page-title { font-size: 30px; }
-      .icon-btn { width: 44px; height: 44px; }
-    }
-  </style>
-</head>
-<body>
-  <div class="aurora"></div>
-  <div class="grid-bg"></div>
-  <main class="shell">
-    ${content}
-  </main>
-  <script>
-    ${script}
-  </script>
-</body>
-</html>`;
-}
-
-function loginPage(error = '') {
-  return layout(
-    'ورود',
-    `
-      <div class="login-wrap">
-        <div class="glass-strong login-card fade-in-up shine">
-          <div class="login-top">
-            <div class="logo">🔐</div>
-            <div>
-              <h1 style="margin:0;font-size:18px;font-weight:900;">ورود امن</h1>
-              <p style="margin:4px 0 0;color:rgba(255,255,255,.44);font-size:12px;">فقط کاربران مجاز</p>
-            </div>
-          </div>
-
-          <h2 class="page-title" style="font-size:34px;margin-bottom:10px;">خوش آمدی ✨</h2>
-          <p class="muted" style="margin:0 0 20px;line-height:1.9;">
-            رمز را وارد کن تا وارد داشبورد آپلود بشی.
-          </p>
-
-          ${error ? `<div class="error">${error}</div>` : ''}
-
-          <form method="POST" action="/login" class="stack">
-            <div>
-              <label style="display:block;margin-bottom:8px;color:rgba(255,255,255,.8);font-size:13px;">رمز عبور</label>
-              <input class="input" type="password" name="password" placeholder="رمز را بنویس" autocomplete="current-password" required />
-            </div>
-            <button class="btn" type="submit">ورود به پنل</button>
-          </form>
-
-          <div class="hint">
-            رمز داخل کد ذخیره نشده و از <b>Railway Variables</b> خوانده می‌شود.
-          </div>
-        </div>
-      </div>
-    `
-  );
-}
-
-function uploadPage() {
-  const totalFiles = fs.existsSync(UPLOAD_DIR)
-    ? fs.readdirSync(UPLOAD_DIR).filter(f => f.endsWith('.html')).length
-    : 0;
-
-  return layout(
-    'داشبورد',
-    `
-      <header class="header glass fade-in-up">
-        <div class="brand">
-          <div class="logo">⚡</div>
-          <div>
-            <h1>Nebula Host</h1>
-            <p>پنل آپلود HTML با طراحی شیشه‌ای</p>
-          </div>
-        </div>
-
-        <div class="header-actions">
-          <div class="pill"><span class="dot"></span> آنلاین</div>
-          <a class="pill" href="/logout">خروج</a>
-        </div>
-      </header>
-
-      <section class="section fade-in-up">
-        <h2 class="page-title">
-          خوش آمدی به <span class="text-gradient">داشبورد</span> ✨
-        </h2>
-        <p class="muted" style="margin:12px 0 0;font-size:17px;line-height:1.9;">
-          فایل HTML خودت را آپلود کن و در چند ثانیه لینک اختصاصی بگیر.
-        </p>
-      </section>
-
-      <section class="stats fade-in-up">
-        <div class="stat glass shine">
-          <div class="icon">📄</div>
-          <div class="num">${totalFiles}</div>
-          <div class="label">فایل‌های ذخیره‌شده</div>
-        </div>
-
-        <div class="stat glass shine">
-          <div class="icon">🚀</div>
-          <div class="num">1</div>
-          <div class="label">پنل فعال</div>
-        </div>
-
-        <div class="stat glass shine">
-          <div class="icon">🔗</div>
-          <div class="num">${totalFiles}</div>
-          <div class="label">لینک‌های ساخته‌شده</div>
-        </div>
-
-        <div class="stat glass shine">
-          <div class="icon">🛡️</div>
-          <div class="num">100%</div>
-          <div class="label">ورود امن</div>
-        </div>
-      </section>
-
-      <section class="hero glass-strong fade-in-up">
-        <div class="hero-grid">
-          <div class="hero-card">
-            <h3 style="margin:0 0 10px;font-size:24px;font-weight:900;">آپلود فایل جدید</h3>
-            <p class="muted" style="margin:0 0 18px;line-height:1.9;">
-              فایل HTML را انتخاب کن، آپلودش کن، و لینک سایت را بگیر.
-            </p>
-
-            <form id="uploadForm" class="stack">
-              <div class="dropzone" id="dropzone">
-                <div class="drop-ico">☁️</div>
-                <div class="drop-title">فایل HTML را اینجا بکش یا کلیک کن</div>
-                <div class="drop-sub">فقط فایل با پسوند <b>.html</b> قبول می‌شود</div>
-                <div class="file-name" id="fileName"></div>
-                <input type="file" id="fileInput" accept=".html" hidden />
-              </div>
-              <button class="btn" id="uploadBtn" type="submit">آپلود و ساخت لینک</button>
-            </form>
-
-            <div class="result" id="result"></div>
-          </div>
-
-          <aside class="hero-card">
-            <h3 style="margin:0 0 14px;font-size:22px;font-weight:900;">راهنمای سریع</h3>
-            <ul class="tips">
-              <li>فایل را با پسوند <b>.html</b> ذخیره کن.</li>
-              <li>روی باکس آپلود کلیک کن یا فایل را بکش داخلش.</li>
-              <li>بعد از آپلود، لینک را کپی کن و بازش کن.</li>
-              <li>اگر خواستی بعداً طراحی را حتی شبیه‌تر هم می‌کنم.</li>
-            </ul>
-
-            <div style="margin-top:18px;padding:16px;border-radius:20px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);">
-              <div style="font-weight:900;margin-bottom:8px;">نکته</div>
-              <div class="muted" style="line-height:1.9;">
-                این طراحی کاملاً با HTML و CSS خالص ساخته شده و روی Railway راحت اجرا می‌شود.
-              </div>
-            </div>
-          </aside>
-        </div>
-      </section>
-    `,
-    `
-      const dropzone = document.getElementById('dropzone');
-      const fileInput = document.getElementById('fileInput');
-      const fileName = document.getElementById('fileName');
-      const form = document.getElementById('uploadForm');
-      const result = document.getElementById('result');
-      const uploadBtn = document.getElementById('uploadBtn');
-
-      dropzone.addEventListener('click', function () {
-        fileInput.click();
-      });
-
-      fileInput.addEventListener('change', function () {
-        if (fileInput.files[0]) {
-          fileName.textContent = 'فایل انتخاب شده: ' + fileInput.files[0].name;
-        }
-      });
-
-      ['dragenter', 'dragover'].forEach(function (eventName) {
-        dropzone.addEventListener(eventName, function (e) {
-          e.preventDefault();
-          dropzone.classList.add('dragover');
-        });
-      });
-
-      ['dragleave', 'drop'].forEach(function (eventName) {
-        dropzone.addEventListener(eventName, function (e) {
-          e.preventDefault();
-          dropzone.classList.remove('dragover');
-        });
-      });
-
-      dropzone.addEventListener('drop', function (e) {
-        const file = e.dataTransfer.files && e.dataTransfer.files[0];
-        if (file) {
-          const dt = new DataTransfer();
-          dt.items.add(file);
-          fileInput.files = dt.files;
-          fileName.textContent = 'فایل انتخاب شده: ' + file.name;
-        }
-      });
-
-      form.addEventListener('submit', async function (e) {
-        e.preventDefault();
-
-        if (!fileInput.files[0]) return;
-
-        uploadBtn.disabled = true;
-        uploadBtn.textContent = 'در حال آپلود...';
-
-        const formData = new FormData();
-        formData.append('htmlFile', fileInput.files[0]);
-
-        try {
-          const response = await fetch('/upload', {
-            method: 'POST',
-            body: formData
-          });
-
-          const data = await response.json();
-
-          if (response.ok) {
-            result.className = 'result show success';
-            result.innerHTML =
-              '<div style="display:grid;gap:10px;">' +
-                '<div style="font-weight:900;">✅ فایل با موفقیت آپلود شد</div>' +
-                '<a href="' + data.url + '" target="_blank">' + data.url + '</a>' +
-                '<button class="copy-btn" id="copyBtn" type="button">کپی لینک</button>' +
-              '</div>';
-
-            document.getElementById('copyBtn').addEventListener('click', async function () {
-              await navigator.clipboard.writeText(data.url);
-              alert('لینک کپی شد');
-            });
-          } else {
-            result.className = 'result show error';
-            result.innerHTML = '<b>خطا:</b> ' + (data.error || 'خطای نامشخص');
-          }
-        } catch (err) {
-          result.className = 'result show error';
-          result.innerHTML = '<b>خطا:</b> مشکل در آپلود';
-        }
-
-        uploadBtn.disabled = false;
-        uploadBtn.textContent = 'آپلود و ساخت لینک';
-      });
-    `
-  );
-}
-
-function requireAuth(req, res, next) {
-  if (req.session.auth) return next();
-  return res.redirect('/login');
-}
-
-function requireApiAuth(req, res, next) {
-  if (req.session.auth) return next();
-  return res.status(401).json({ error: 'ابتدا وارد شوید' });
-}
+// --- AUTH ---
+const requireAuth = (req, res, next) => req.session.auth ? next() : res.redirect('/login');
 
 app.get('/login', (req, res) => {
   if (req.session.auth) return res.redirect('/');
-  res.send(loginPage());
+  res.send(renderLayout('ورود', `
+    <div class="login-wrap">
+      <div class="glass-strong login-card fade-in-up">
+        <div class="brand" style="justify-content:center; margin-bottom:24px;">
+          <div class="logo">🌌</div>
+          <div><h1 style="font-size:22px;">Nebula Panels</h1><p>پنل‌ساز ابری</p></div>
+        </div>
+        ${req.query.err ? '<div class="error">رمز عبور اشتباه است</div>' : ''}
+        <form method="POST" action="/login" class="stack">
+          <input class="input" type="password" name="password" placeholder="رمز عبور" required />
+          <button class="btn" type="submit">ورود به داشبورد</button>
+        </form>
+      </div>
+    </div>
+  `));
 });
 
 app.post('/login', (req, res) => {
-  const password = (req.body.password || '').trim();
-  const expected = (process.env.APP_PASSWORD || '').trim();
-
-  if (!expected) {
-    return res.status(500).send(loginPage('متغیر APP_PASSWORD در Railway تنظیم نشده'));
-  }
-
-  if (password === expected) {
-    req.session.auth = true;
-    return res.redirect('/');
-  }
-
-  return res.status(401).send(loginPage('رمز اشتباه است'));
+  const pass = (req.body.password || '').trim();
+  const realPass = (process.env.APP_PASSWORD || 'arian@11USER').trim();
+  if (pass === realPass) { req.session.auth = true; return res.redirect('/'); }
+  res.redirect('/login?err=1');
 });
 
-app.get('/logout', (req, res) => {
-  req.session.destroy(() => res.redirect('/login'));
-});
+app.get('/logout', (req, res) => { req.session.destroy(); res.redirect('/login'); });
 
+// --- DASHBOARD ---
 app.get('/', requireAuth, (req, res) => {
-  res.send(uploadPage());
+  const db = getDB();
+  const panels = Object.values(db.panels).sort((a, b) => new Date(b.created) - new Date(a.created));
+  const activeCount = panels.filter(p => p.status === 'active' && new Date(p.expires) > new Date()).length;
+  const expiredCount = panels.filter(p => new Date(p.expires) <= new Date()).length;
+
+  res.send(renderLayout('داشبورد', `
+    <header class="header glass fade-in-up">
+      <div class="brand"><div class="logo">🌌</div><div><h1>Nebula Panels</h1><p>پنل‌ساز حرفه‌ای</p></div></div>
+      <a class="pill" href="/logout">خروج</a>
+    </header>
+
+    <section class="stats fade-in-up">
+      <div class="stat glass shine"><div class="icon">📄</div><div class="num">${panels.length}</div><div class="label">کل پنل‌ها</div></div>
+      <div class="stat glass shine"><div class="icon">🚀</div><div class="num">${activeCount}</div><div class="label">فعال</div></div>
+      <div class="stat glass shine"><div class="icon">⏳</div><div class="num">${expiredCount}</div><div class="label">منقضی</div></div>
+    </section>
+
+    <section class="hero glass-strong fade-in-up" style="margin-bottom:30px;">
+      <h2 style="margin:0 0 16px; font-size:24px;">ساخت پنل جدید ✨</h2>
+      <form id="uploadForm" enctype="multipart/form-data" class="stack">
+        <div class="dropzone" id="dropzone">
+          <div class="drop-ico">☁️</div>
+          <div class="drop-title">فایل HTML را انتخاب کنید</div>
+          <div class="file-name" id="fileName"></div>
+          <input type="file" id="fileInput" name="htmlFile" accept=".html" hidden required />
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+          <input class="input" type="text" name="name" placeholder="نام پنل (مثلا: سایت من)" required />
+          <select class="input" name="expiry" required>
+            <option value="1">1 روز</option>
+            <option value="7">7 روز</option>
+            <option value="30" selected>1 ماه</option>
+            <option value="365">1 سال</option>
+          </select>
+        </div>
+        <button class="btn" id="uploadBtn" type="submit">آپلود و ساخت لینک</button>
+      </form>
+      <div class="result" id="result"></div>
+    </section>
+
+    <section class="fade-in-up">
+      <h2 style="margin:0 0 16px; font-size:24px;">پنل‌های من</h2>
+      <div class="panels-grid">
+        ${panels.length === 0 ? '<div class="glass" style="padding:40px; text-align:center; border-radius:20px; grid-column:1/-1;">هنوز پنلی نساخته‌اید 🌌</div>' : ''}
+        ${panels.map(p => {
+          const isExpired = new Date(p.expires) <= new Date();
+          const isPaused = p.status === 'paused';
+          const statusClass = isExpired ? 'expired' : (isPaused ? 'paused' : 'active');
+          const statusText = isExpired ? 'منقضی شده' : (isPaused ? 'متوقف شده' : 'فعال');
+          const url = `${req.protocol}://${req.get('host')}/view/${p.id}`;
+          return `
+            <div class="panel-card glass shine">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <h3 style="margin:0; font-size:18px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${p.name}</h3>
+                <span class="badge ${statusClass}">${statusText}</span>
+              </div>
+              <div class="meta">ساخت: ${new Date(p.created).toLocaleDateString('fa-IR')}</div>
+              <div class="meta">انقضا: ${new Date(p.expires).toLocaleDateString('fa-IR')}</div>
+              <div class="actions">
+                <button class="btn-sm" onclick="togglePanel('${p.id}')">${isPaused ? 'وصل' : 'قطع'}</button>
+                <button class="btn-sm" onclick="extendPanel('${p.id}')">تمدید</button>
+                <a href="/edit/${p.id}" class="btn-sm">ویرایش کد</a>
+                <button class="btn-sm copy-link" data-url="${url}">لینک</button>
+              </div>
+            </div>`;
+        }).join('')}
+      </div>
+    </section>
+  `, `
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('fileInput');
+    document.getElementById('dropzone').onclick = () => fileInput.click();
+    fileInput.onchange = () => document.getElementById('fileName').textContent = fileInput.files[0]?.name || '';
+
+    document.getElementById('uploadForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('uploadBtn');
+      btn.disabled = true; btn.textContent = 'در حال آپلود...';
+      const fd = new FormData(e.target);
+      const res = await fetch('/upload', { method: 'POST', body: fd });
+      const data = await res.json();
+      const result = document.getElementById('result');
+      if(res.ok) {
+        result.className = 'result show success';
+        result.innerHTML = '✅ پنل ساخته شد! صفحه رفرش می‌شود...';
+        setTimeout(() => location.reload(), 1500);
+      } else {
+        result.className = 'result show error';
+        result.innerHTML = data.error;
+        btn.disabled = false; btn.textContent = 'آپلود و ساخت لینک';
+      }
+    };
+
+    document.querySelectorAll('.copy-link').forEach(btn => {
+      btn.onclick = () => { navigator.clipboard.writeText(btn.dataset.url); alert('لینک کپی شد!'); }
+    });
+
+    async function togglePanel(id) {
+      await fetch('/api/toggle/' + id, { method: 'POST' });
+      location.reload();
+    }
+
+    async function extendPanel(id) {
+      const days = prompt('چند روز تمدید شود؟ (مثلا 30)', '30');
+      if(days && !isNaN(days)) {
+        await fetch('/api/extend/' + id, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({days: parseInt(days)}) });
+        location.reload();
+      }
+    }
+  `));
 });
 
-app.post('/upload', requireApiAuth, upload.single('htmlFile'), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'فایلی انتخاب نشده' });
-  }
-
-  const id = path.parse(req.file.filename).name;
-  const proto = req.headers['x-forwarded-proto'] || req.protocol;
-  const url = `${proto}://${req.get('host')}/view/${id}`;
-
-  res.json({ url });
+// --- UPLOAD ---
+app.post('/upload', requireAuth, (req, res, next) => {
+  req.panelId = uuidv4();
+  next();
+}, upload.single('htmlFile'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'فایل انتخاب نشده' });
+  const db = getDB();
+  const days = parseInt(req.body.expiry) || 30;
+  db.panels[req.panelId] = {
+    id: req.panelId,
+    name: req.body.name || 'بدون نام',
+    file: req.panelId + '.html',
+    created: new Date().toISOString(),
+    expires: new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString(),
+    status: 'active'
+  };
+  saveDB(db);
+  res.json({ success: true });
 });
 
+// --- PUBLIC VIEW ---
 app.get('/view/:id', (req, res) => {
-  const filePath = path.join(UPLOAD_DIR, req.params.id + '.html');
-
-  if (!fs.existsSync(filePath)) {
-    return res.status(404).send('فایل پیدا نشد');
-  }
-
-  res.sendFile(filePath);
+  const db = getDB();
+  const panel = db.panels[req.params.id];
+  if (!panel) return res.status(404).send(renderError('پنل یافت نشد'));
+  if (panel.status === 'paused') return res.status(403).send(renderError('این پنل توسط مدیر متوقف شده است'));
+  if (new Date() > new Date(panel.expires)) return res.status(403).send(renderError('زمان این پنل به پایان رسیده است ⏳'));
+  res.sendFile(path.join(UPLOAD_DIR, panel.file));
 });
 
-app.use((err, req, res, next) => {
-  if (req.path === '/upload') {
-    return res.status(400).json({ error: err.message || 'خطا رخ داد' });
-  }
-
-  if (req.path === '/login') {
-    return res.status(400).send(loginPage(err.message || 'خطا رخ داد'));
-  }
-
-  return res.status(500).send('خطای داخلی سرور');
+// --- EDIT CODE ---
+app.get('/edit/:id', requireAuth, (req, res) => {
+  const db = getDB();
+  const panel = db.panels[req.params.id];
+  if (!panel) return res.redirect('/');
+  const code = fs.readFileSync(path.join(UPLOAD_DIR, panel.file), 'utf-8');
+  res.send(renderLayout('ویرایش کد', `
+    <header class="header glass fade-in-up">
+      <div class="brand"><div class="logo">💻</div><div><h1>ویرایش: ${panel.name}</h1></div></div>
+      <a class="pill" href="/">بازگشت</a>
+    </header>
+    <form method="POST" action="/edit/${req.params.id}" class="fade-in-up">
+      <textarea name="code" class="code-editor glass">${code}</textarea>
+      <button class="btn" type="submit" style="margin-top:16px;">ذخیره تغییرات</button>
+    </form>
+  `));
 });
 
-app.listen(PORT, () => {
-  console.log('Server running on ' + PORT);
+app.post('/edit/:id', requireAuth, (req, res) => {
+  const db = getDB();
+  const panel = db.panels[req.params.id];
+  if (panel) {
+    fs.writeFileSync(path.join(UPLOAD_DIR, panel.file), req.body.code);
+  }
+  res.redirect('/');
 });
+
+// --- API ACTIONS ---
+app.post('/api/toggle/:id', requireAuth, (req, res) => {
+  const db = getDB();
+  if (db.panels[req.params.id]) {
+    db.panels[req.params.id].status = db.panels[req.params.id].status === 'active' ? 'paused' : 'active';
+    saveDB(db);
+  }
+  res.json({ success: true });
+});
+
+app.post('/api/extend/:id', requireAuth, (req, res) => {
+  const db = getDB();
+  const panel = db.panels[req.params.id];
+  if (panel && req.body.days) {
+    const baseDate = new Date(panel.expires) > new Date() ? new Date(panel.expires) : new Date();
+    panel.expires = new Date(baseDate.getTime() + req.body.days * 24 * 60 * 60 * 1000).toISOString();
+    if(panel.status === 'paused') panel.status = 'active';
+    saveDB(db);
+  }
+  res.json({ success: true });
+});
+
+// --- UI HELPERS ---
+function renderError(msg) {
+  return renderLayout('خطا', `
+    <div class="login-wrap">
+      <div class="glass-strong login-card fade-in-up" style="text-align:center;">
+        <div style="font-size:60px; margin-bottom:16px;">🚫</div>
+        <h2 style="margin:0 0 12px;">${msg}</h2>
+        <a href="/" class="btn" style="display:inline-block; text-decoration:none; width:auto; padding:12px 24px;">بازگشت</a>
+      </div>
+    </div>
+  `);
+}
+
+function renderLayout(title, content, script = '') {
+  return `<!DOCTYPE html><html lang="fa" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${title} | Nebula</title>
+  <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet">
+  <style>
+    :root{--bg:#05030f;--glass:rgba(255,255,255,.05);--glass-strong:rgba(255,255,255,.08);--line:rgba(255,255,255,.1);--text:#f8fafc;--muted:rgba(255,255,255,.6);--accent:#7c3aed;--cyan:#22d3ee;--success:#10b981;--danger:#ef4444;--warn:#f59e0b;}
+    *{box-sizing:border-box; margin:0; padding:0;}
+    body{font-family:'Vazirmatn',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; overflow-x:hidden;}
+    .aurora{position:fixed; inset:-20%; pointer-events:none; z-index:0; filter:blur(80px); opacity:.6;}
+    .aurora::before,.aurora::after{content:""; position:absolute; border-radius:999px;}
+    .aurora::before{width:500px; height:500px; left:10%; top:5%; background:radial-gradient(circle,rgba(124,58,237,.5),transparent 70%); animation:float 12s infinite;}
+    .aurora::after{width:600px; height:600px; right:5%; bottom:5%; background:radial-gradient(circle,rgba(34,211,238,.4),transparent 70%); animation:float 15s infinite reverse;}
+    @keyframes float{0%,100%{transform:translate(0,0)} 50%{transform:translate(30px,-30px)}}
+    .shell{position:relative; z-index:1; max-width:1200px; margin:0 auto; padding:20px;}
+    .glass{background:var(--glass); border:1px solid var(--line); backdrop-filter:blur(16px); border-radius:20px;}
+    .glass-strong{background:var(--glass-strong); border:1px solid rgba(255,255,255,.15); backdrop-filter:blur(24px); border-radius:24px;}
+    .header{display:flex; justify-content:space-between; align-items:center; padding:16px 20px; margin-bottom:24px;}
+    .brand{display:flex; align-items:center; gap:12px;}
+    .logo{width:44px; height:44px; border-radius:14px; background:linear-gradient(135deg,var(--accent),var(--cyan)); display:grid; place-items:center; font-size:22px;}
+    h1{font-size:18px; font-weight:900;}
+    .brand p{font-size:12px; color:var(--muted);}
+    .pill{background:rgba(255,255,255,.08); border:1px solid var(--line); padding:8px 16px; border-radius:99px; color:var(--text); text-decoration:none; font-size:13px; transition:.2s;}
+    .pill:hover{background:rgba(255,255,255,.15);}
+    .stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:16px; margin-bottom:24px;}
+    .stat{padding:20px; position:relative; overflow:hidden;}
+    .stat .icon{width:40px; height:40px; border-radius:12px; background:linear-gradient(135deg,var(--accent),#d946ef); display:grid; place-items:center; margin-bottom:12px;}
+    .stat:nth-child(2) .icon{background:linear-gradient(135deg,var(--cyan),#06b6d4);}
+    .stat:nth-child(3) .icon{background:linear-gradient(135deg,var(--warn),#ea580c);}
+    .stat .num{font-size:28px; font-weight:900;}
+    .stat .label{font-size:12px; color:var(--muted);}
+    .hero{padding:24px; margin-bottom:24px;}
+    .stack{display:grid; gap:14px;}
+    .input, select.input{background:rgba(255,255,255,.06); border:1px solid var(--line); border-radius:14px; padding:14px; color:white; font-family:inherit; outline:none;}
+    .input:focus{border-color:var(--cyan); box-shadow:0 0 0 3px rgba(34,211,238,.15);}
+    .btn{background:linear-gradient(135deg,var(--accent),#d946ef,var(--cyan)); border:none; color:white; padding:14px; border-radius:14px; font-weight:800; cursor:pointer; font-family:inherit; transition:.2s;}
+    .btn:hover{transform:translateY(-2px); box-shadow:0 10px 20px rgba(124,58,237,.3);}
+    .btn:disabled{opacity:.5; cursor:not-allowed; transform:none;}
+    .dropzone{border:2px dashed rgba(255,255,255,.2); border-radius:20px; padding:30px; text-align:center; cursor:pointer; transition:.2s;}
+    .dropzone:hover{border-color:var(--cyan); background:rgba(34,211,238,.05);}
+    .drop-ico{font-size:40px; margin-bottom:10px;}
+    .drop-title{font-weight:700; margin-bottom:6px;}
+    .file-name{color:var(--cyan); font-size:13px; min-height:20px;}
+    .result{display:none; margin-top:16px; padding:14px; border-radius:14px; text-align:center;}
+    .result.show{display:block;}
+    .result.success{background:rgba(16,185,129,.15); border:1px solid rgba(16,185,129,.3); color:#6ee7b7;}
+    .result.error{background:rgba(239,68,68,.15); border:1px solid rgba(239,68,68,.3); color:#fca5a5;}
+    .panels-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:16px;}
+    .panel-card{padding:20px; display:flex; flex-direction:column; gap:10px;}
+    .badge{padding:4px 10px; border-radius:99px; font-size:11px; font-weight:700;}
+    .badge.active{background:rgba(16,185,129,.2); color:#6ee7b7;}
+    .badge.paused{background:rgba(245,158,11,.2); color:#fcd34d;}
+    .badge.expired{background:rgba(239,68,68,.2); color:#fca5a5;}
+    .meta{font-size:12px; color:var(--muted);}
+    .actions{display:flex; gap:8px; flex-wrap:wrap; margin-top:auto; padding-top:10px; border-top:1px solid var(--line);}
+    .btn-sm{background:rgba(255,255,255,.08); border:1px solid var(--line); color:white; padding:6px 12px; border-radius:10px; font-size:12px; cursor:pointer; text-decoration:none; transition:.2s;}
+    .btn-sm:hover{background:rgba(255,255,255,.15);}
+    .login-wrap{min-height:100vh; display:grid; place-items:center; padding:20px;}
+    .login-card{width:100%; max-width:420px; padding:30px;}
+    .error{background:rgba(239,68,68,.15); border:1px solid rgba(239,68,68,.3); color:#fca5a5; padding:12px; border-radius:12px; margin-bottom:16px; text-align:center; font-size:14px;}
+    .code-editor{width:100%; height:60vh; background:rgba(0,0,0,.4); border:1px solid var(--line); border-radius:16px; color:#a5f3fc; padding:20px; font-family:monospace; font-size:14px; outline:none; resize:vertical; direction:ltr; text-align:left;}
+    .fade-in-up{animation:fadeUp .5s ease both;}
+    @keyframes fadeUp{from{opacity:0; transform:translateY(20px)} to{opacity:1; transform:translateY(0)}}
+    .shine{position:relative; overflow:hidden;}
+    .shine::after{content:""; position:absolute; inset:-50%; background:linear-gradient(120deg,transparent 40%,rgba(255,255,255,.05) 50%,transparent 60%); transform:translateX(-100%) rotate(25deg); transition:.6s;}
+    .shine:hover::after{transform:translateX(100%) rotate(25deg);}
+  </style></head><body>
+  <div class="aurora"></div>
+  <main class="shell">${content}</main>
+  <script>${script}</script></body></html>`;
+}
+
+app.listen(PORT, () => console.log('Nebula Panels running on ' + PORT));
