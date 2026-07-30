@@ -1,5 +1,5 @@
 {
-  "name": "html-host",
+  "name": "nebula-host",
   "version": "1.0.0",
   "main": "server.js",
   "scripts": {
