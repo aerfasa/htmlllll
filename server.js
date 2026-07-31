@@ -30,7 +30,7 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOAD_DIR),
   filename: (req, file, cb) => cb(null, req.panelId + '.html')
 });
-const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } }); // Max 10MB
+const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
 
 const requireAuth = (req, res, next) => req.session.auth ? next() : res.redirect('/login');
 const formatDate = (iso) => new Date(iso).toLocaleDateString('fa-IR');
@@ -132,6 +132,7 @@ app.get('/', requireAuth, (req, res) => {
                 <button class="action-btn" onclick="navigator.clipboard.writeText('${url}'); this.innerHTML='✅'; setTimeout(()=>this.innerHTML='📋', 1500);" title="کپی لینک">📋</button>
                 <a href="${url}" target="_blank" class="action-btn" title="باز کردن">↗</a>
                 <a href="/edit/${p.id}" class="action-btn" title="ویرایش کد">✏️</a>
+                <button class="action-btn delete-btn" onclick="deletePanel('${p.id}')" title="حذف پنل">🗑️</button>
                 <div class="toggle ${toggleClass}" onclick="togglePanel('${p.id}')"><div class="toggle-thumb"></div></div>
              </div>
           </div>
@@ -200,6 +201,12 @@ app.get('/', requireAuth, (req, res) => {
           
           <input type="text" name="name" placeholder="نام پنل (مثلا: سایت من)" required class="input">
           
+          <div style="display:flex; align-items:center; gap:8px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); border-radius:14px; padding: 0 16px;">
+             <span style="opacity:.5; font-size:13px; white-space:nowrap; font-family:monospace;" dir="ltr">/view/</span>
+             <input type="text" name="customSlug" placeholder="لینک دلخواه (اختیاری)" class="input" style="border:none; background:transparent; padding:14px 0; flex:1; box-shadow:none;">
+          </div>
+          <div style="font-size:11px; opacity:.4; margin-top:-8px;">فقط حروف انگلیسی، اعداد و خط تیره. خالی = لینک رندوم</div>
+          
           <select name="expiry" id="expirySelect" required class="input">
             <option value="1">1 روز</option>
             <option value="7">7 روز</option>
@@ -231,13 +238,8 @@ app.get('/', requireAuth, (req, res) => {
     const customDays = document.getElementById('customDays');
     
     expirySelect.addEventListener('change', function() {
-      if(this.value === 'custom') {
-        customWrap.style.display = 'block';
-        customDays.required = true;
-      } else {
-        customWrap.style.display = 'none';
-        customDays.required = false;
-      }
+      if(this.value === 'custom') { customWrap.style.display = 'block'; customDays.required = true; } 
+      else { customWrap.style.display = 'none'; customDays.required = false; }
     });
 
     // Dropzone Logic
@@ -246,9 +248,7 @@ app.get('/', requireAuth, (req, res) => {
     const fileName = document.getElementById('fileName');
 
     dropzone.addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', () => {
-      if(fileInput.files[0]) fileName.textContent = '📄 ' + fileInput.files[0].name;
-    });
+    fileInput.addEventListener('change', () => { if(fileInput.files[0]) fileName.textContent = '📄 ' + fileInput.files[0].name; });
 
     ['dragenter', 'dragover'].forEach(evt => dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.add('dragover'); }));
     ['dragleave', 'drop'].forEach(evt => dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.remove('dragover'); }));
@@ -285,11 +285,7 @@ app.get('/', requireAuth, (req, res) => {
     });
 
     // API Actions
-    async function togglePanel(id) {
-      await fetch('/api/toggle/' + id, { method: 'POST' });
-      location.reload();
-    }
-
+    async function togglePanel(id) { await fetch('/api/toggle/' + id, { method: 'POST' }); location.reload(); }
     async function extendPanel(id) {
       const days = prompt('چند روز تمدید شود؟ (مثلا 30)', '30');
       if(days && !isNaN(days)) {
@@ -297,20 +293,33 @@ app.get('/', requireAuth, (req, res) => {
         location.reload();
       }
     }
+    async function deletePanel(id) {
+      if(confirm('آیا از حذف کامل این پنل و فایل آن اطمینان دارید؟')) {
+        await fetch('/api/delete/' + id, { method: 'POST' });
+        location.reload();
+      }
+    }
   `));
 });
 
 // --- UPLOAD ---
-app.post('/upload', requireAuth, (req, res, next) => { req.panelId = uuidv4(); next(); }, upload.single('htmlFile'), (req, res) => {
+app.post('/upload', requireAuth, (req, res, next) => { 
+  let slug = req.body.customSlug ? req.body.customSlug.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '') : '';
+  const db = getDB();
+  
+  if (slug && db.panels[slug]) {
+    return res.status(400).json({ error: 'این لینک دلخواه قبلاً استفاده شده است.' });
+  }
+  
+  req.panelId = slug || uuidv4();
+  next(); 
+}, upload.single('htmlFile'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'فایل انتخاب نشده' });
   const db = getDB();
   
   let days = 30;
-  if (req.body.expiry === 'custom') {
-    days = parseInt(req.body.customDays) || 1;
-  } else {
-    days = parseInt(req.body.expiry) || 30;
-  }
+  if (req.body.expiry === 'custom') days = parseInt(req.body.customDays) || 1;
+  else days = parseInt(req.body.expiry) || 30;
 
   db.panels[req.panelId] = {
     id: req.panelId, name: req.body.name || 'بدون نام', file: req.panelId + '.html', days: days,
@@ -337,6 +346,18 @@ app.post('/api/extend/:id', requireAuth, (req, res) => {
     const baseDate = new Date(panel.expires) > new Date() ? new Date(panel.expires) : new Date();
     panel.expires = new Date(baseDate.getTime() + req.body.days * 24 * 60 * 60 * 1000).toISOString();
     if(panel.status === 'paused') panel.status = 'active';
+    saveDB(db);
+  }
+  res.json({ success: true });
+});
+
+app.post('/api/delete/:id', requireAuth, (req, res) => {
+  const db = getDB();
+  const panel = db.panels[req.params.id];
+  if (panel) {
+    const filePath = path.join(UPLOAD_DIR, panel.file);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    delete db.panels[req.params.id];
     saveDB(db);
   }
   res.json({ success: true });
@@ -417,7 +438,16 @@ body{font-family:'Vazirmatn',system-ui,sans-serif;background:#05030f;color:#fff;
 .aurora::after{background:radial-gradient(circle at 70% 70%,#06b6d4 0%,transparent 60%);bottom:-20%;left:-10%;animation-delay:-11s}
 .aurora-3{position:absolute;width:60vmax;height:60vmax;border-radius:50%;background:radial-gradient(circle at 50% 50%,#ec4899 0%,transparent 60%);top:30%;left:30%;filter:blur(140px);opacity:.35;animation:float 28s ease-in-out infinite -5s}
 @keyframes float{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(5vw,-5vh) scale(1.1)}66%{transform:translate(-5vw,5vh) scale(.95)}}
-.grid-bg{position:fixed;inset:0;background-image:linear-gradient(rgba(255,255,255,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.04) 1px,transparent 1px);background-size:50px 50px;mask-image:radial-gradient(ellipse at center,black 40%,transparent 75%);pointer-events:none;z-index:0}
+
+/* SQUARE GRID BACKGROUND */
+.grid-bg{
+  position:fixed;inset:0;z-index:0;pointer-events:none;
+  background-image:
+    linear-gradient(rgba(255,255,255,.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.04) 1px, transparent 1px);
+  background-size: 50px 50px;
+  mask-image: radial-gradient(ellipse at center, black 20%, transparent 80%);
+}
 
 /* Glassmorphism */
 .glass{background:rgba(255,255,255,.03);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border:1px solid rgba(255,255,255,.08)}
@@ -474,6 +504,7 @@ main{position:relative;z-index:10;max-width:1200px;margin:0 auto;padding:32px 24
 .card-actions{display:flex;gap:8px;align-items:center}
 .action-btn{width:40px;height:40px;border-radius:12px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;text-decoration:none;transition:all .2s;font-size:16px}
 .action-btn:hover{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2);transform:scale(1.05)}
+.delete-btn:hover{background:rgba(239,68,68,.2);border-color:rgba(239,68,68,.4);color:#fca5a5}
 
 .toggle{width:52px;height:28px;border-radius:999px;background:rgba(255,255,255,.1);position:relative;cursor:pointer;transition:all .3s;border:1px solid rgba(255,255,255,.05)}
 .toggle.active{background:linear-gradient(90deg,#10b981,#06b6d4);box-shadow:0 0 15px rgba(16,185,129,.4);border-color:transparent}
