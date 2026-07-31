@@ -1,6 +1,6 @@
 {
-  "name": "nebula-panels-ultra",
-  "version": "2.0.0",
+  "name": "nebula-panels-final",
+  "version": "3.0.0",
   "main": "server.js",
   "scripts": { "start": "node server.js" },
   "dependencies": {
