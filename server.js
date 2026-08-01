@@ -56,21 +56,109 @@ function startBot(botData, hostUrl) {
     const bot = new TelegramBot(botData.token, { polling: true });
     activeBots[botData.token] = bot;
 
-    bot.on('polling_error', (err) => console.error(`Bot polling error:`, err.message));
+    bot.on('polling_error', (err) => console.error('Bot polling error:', err.message));
 
+    // 1. START COMMAND (Beautiful Welcome)
     bot.onText(/\/start/, (msg) => {
       if (msg.from.id.toString() !== botData.ownerId) {
         return bot.sendMessage(msg.chat.id, "⛔️ شما دسترسی به این ربات را ندارید.");
       }
-      bot.sendMessage(msg.chat.id, `سلام ${msg.from.first_name}! 👋\nفایل HTML خود را بفرستید تا لینک اختصاصی دریافت کنید.`, { parse_mode: 'Markdown' });
+      const welcomeMsg = 
+        "✨ *به پنل ابری Nebula خوش آمدید* ✨\n" +
+        "━━━━━━━━━━━━━━━━━━\n" +
+        "🌌 *مدیریت حرفه‌ای فایل‌های HTML*\n\n" +
+        "📥 فایل HTML خود را ارسال کنید تا در کسری از ثانیه لینک اختصاصی و امن دریافت نمایید.\n\n" +
+        "▫️ از دکمه‌های زیر برای مدیریت استفاده کنید:";
+      
+      const opts = {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📂 پنل‌های من', callback_data: 'my_panels' }, { text: '📊 آمار کلی', callback_data: 'stats' }],
+            [{ text: '❓ راهنما', callback_data: 'help' }]
+          ]
+        }
+      };
+      bot.sendMessage(msg.chat.id, welcomeMsg, opts);
     });
 
+    // 2. CALLBACK QUERIES (Glass Buttons Actions)
+    bot.on('callback_query', async (query) => {
+      const chatId = query.message.chat.id;
+      const msgId = query.message.message_id;
+      const data = query.data;
+      
+      if (query.from.id.toString() !== botData.ownerId) return;
+
+      if (data === 'my_panels') {
+        const db = getDB();
+        const panels = Object.values(db.panels).sort((a, b) => new Date(b.created) - new Date(a.created));
+        if (panels.length === 0) {
+          return bot.answerCallbackQuery(query.id, { text: 'هنوز پنلی نساخته‌اید! 🌌', show_alert: true });
+        }
+        
+        let listMsg = "📂 *لیست پنل‌های شما:*\n━━━━━━━━━━━━━━━━━━\n";
+        const keyboard = [];
+        
+        panels.slice(0, 5).forEach((p, i) => {
+          const status = p.status === 'active' ? '🟢 فعال' : '🔴 متوقف';
+          listMsg += `\n${i + 1}️⃣ *${p.name}*\n`;
+          listMsg += `⏳ وضعیت: ${status}\n`;
+          listMsg += `🔗 \`${hostUrl}/view/${p.id}\`\n`;
+          
+          keyboard.push([
+            { text: '🔗 باز کردن', url: `${hostUrl}/view/${p.id}` },
+            { text: p.status === 'active' ? '⏸ قطع' : '▶️ وصل', callback_data: `tog_${p.id}` },
+            { text: '🗑 حذف', callback_data: `del_${p.id}` }
+          ]);
+        });
+        
+        bot.sendMessage(chatId, listMsg, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+        bot.answerCallbackQuery(query.id);
+      }
+      else if (data === 'stats') {
+        const db = getDB();
+        const panels = Object.values(db.panels);
+        const totalViews = panels.reduce((sum, p) => sum + (p.views || 0), 0);
+        const statsMsg = 
+          "📊 *آمار کلی Nebula*\n" +
+          "━━━━━━━━━━━━━━━━━━\n" +
+          `📁 کل پنل‌ها: ${panels.length}\n` +
+          `👁 کل بازدیدها: ${totalViews}\n` +
+          `🟢 پنل‌های فعال: ${panels.filter(p => p.status === 'active').length}`;
+        bot.sendMessage(chatId, statsMsg, { parse_mode: 'Markdown' });
+        bot.answerCallbackQuery(query.id);
+      }
+      else if (data.startsWith('tog_')) {
+        const id = data.split('_')[1];
+        const db = getDB();
+        if (db.panels[id]) {
+          db.panels[id].status = db.panels[id].status === 'active' ? 'paused' : 'active';
+          saveDB(db);
+          bot.answerCallbackQuery(query.id, { text: 'وضعیت پنل تغییر کرد! ⚡️', show_alert: true });
+        }
+      }
+      else if (data.startsWith('del_')) {
+        const id = data.split('_')[1];
+        const db = getDB();
+        if (db.panels[id]) {
+          const filePath = path.join(UPLOAD_DIR, db.panels[id].file);
+          if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+          delete db.panels[id];
+          saveDB(db);
+          bot.answerCallbackQuery(query.id, { text: 'پنل با موفقیت حذف شد! 🗑', show_alert: true });
+          bot.deleteMessage(chatId, msgId);
+        }
+      }
+    });
+
+    // 3. DOCUMENT UPLOAD (Beautiful Receipt)
     bot.on('document', async (msg) => {
       if (msg.from.id.toString() !== botData.ownerId) return;
       const doc = msg.document;
       
       if (!doc.file_name.toLowerCase().endsWith('.html')) {
-        return bot.sendMessage(msg.chat.id, "❌ فقط فایل‌های با پسوند .html مجاز هستند.");
+        return bot.sendMessage(msg.chat.id, "❌ *خطا:* فقط فایل‌های با پسوند `.html` مجاز هستند.", { parse_mode: 'Markdown' });
       }
 
       try {
@@ -90,7 +178,25 @@ function startBot(botData, hostUrl) {
         saveDB(db);
 
         const url = `${hostUrl}/view/${panelId}`;
-        bot.sendMessage(msg.chat.id, `✅ فایل با موفقیت آپلود شد!\n\n🔗 لینک سایت شما:\n${url}`, { disable_web_page_preview: true });
+        const successMsg = 
+          "✅ *آپلود با موفقیت انجام شد!*\n" +
+          "━━━━━━━━━━━━━━━━━━\n" +
+          `📄 *نام فایل:* ${doc.file_name}\n` +
+          `⏳ *مدت اعتبار:* 30 روز\n\n` +
+          "🔗 *لینک اختصاصی شما:*\n" +
+          `\`${url}\`\n\n` +
+          "▫️ از دکمه‌های زیر برای مدیریت این پنل استفاده کنید:";
+        
+        const opts = {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🌐 باز کردن سایت', url: url }],
+              [{ text: '⏸ قطع موقت', callback_data: `tog_${panelId}` }, { text: '🗑 حذف پنل', callback_data: `del_${panelId}` }]
+            ]
+          }
+        };
+        bot.sendMessage(msg.chat.id, successMsg, opts);
       } catch (err) {
         bot.sendMessage(msg.chat.id, "❌ خطا در پردازش فایل. لطفاً دوباره تلاش کنید.");
       }
@@ -347,12 +453,12 @@ app.post('/api/bot/create', requireAuth, async (req, res) => {
   const { ownerId, token } = req.body;
   if (!ownerId || !token) return res.status(400).json({ error: 'اطلاعات ناقص است.' });
   try {
-    const response = await axios.get(`https://api.telegram.org/bot${token}/getMe`);
+    const response = await axios.get('https://api.telegram.org/bot' + token + '/getMe');
     const botInfo = response.data.result;
     const db = getDB();
     if (!db.bots) db.bots = {};
     const botId = uuidv4();
-    const hostUrl = `${req.protocol}://${req.get('host')}`;
+    const hostUrl = req.protocol + '://' + req.get('host');
     db.bots[botId] = { id: botId, ownerId: ownerId.toString(), token, username: botInfo.username, status: 'active', hostUrl };
     saveDB(db);
     startBot(db.bots[botId], hostUrl);
@@ -381,7 +487,8 @@ app.get('/view/:id', (req, res) => {
   if (panel.status === 'paused') return res.status(403).send(renderError('این پنل متوقف شده است ⏸'));
   if (new Date() > new Date(panel.expires)) return res.status(403).send(renderError('زمان این پنل به پایان رسیده است ⏳'));
   
-  if (panel.password && req.cookies[`panel_${panel.id}`] !== panel.password) {
+  const cookieName = 'panel_' + panel.id;
+  if (panel.password && req.cookies[cookieName] !== panel.password) {
     return res.send(renderLayout('ورود به پنل', `<div class="login-wrap"><div class="glass-strong login-card fade-in-up" style="text-align:center;"><div style="font-size:50px; margin-bottom:16px;">🔒</div><h2 style="font-size:22px; font-weight:900; margin-bottom:8px;">${escapeHTML(panel.name)}</h2><p style="opacity:.5; margin-bottom:24px; font-size:14px;">این لینک محافظت شده است.</p>${req.query.err ? '<div class="error-box">رمز اشتباه است</div>' : ''}<form method="POST" action="/view/${panel.id}" class="stack"><input type="password" name="password" placeholder="رمز عبور" required class="input"><button class="btn-neon" type="submit">ورود</button></form></div></div>`));
   }
   panel.views = (panel.views || 0) + 1; saveDB(db);
@@ -391,10 +498,10 @@ app.get('/view/:id', (req, res) => {
 app.post('/view/:id', (req, res) => { 
   const db = getDB(); const panel = db.panels[req.params.id]; 
   if (panel && panel.password === req.body.password) { 
-    res.cookie(`panel_${panel.id}`, panel.password, { maxAge: 900000, httpOnly: true }); 
-    return res.redirect(`/view/${panel.id}`); 
+    res.cookie('panel_' + panel.id, panel.password, { maxAge: 900000, httpOnly: true }); 
+    return res.redirect('/view/' + panel.id); 
   } 
-  res.redirect(`/view/${panel.id}?err=1`); 
+  res.redirect('/view/' + panel.id + '?err=1'); 
 });
 
 // --- EDIT CODE ---
@@ -402,7 +509,7 @@ app.get('/edit/:id', requireAuth, (req, res) => { const db = getDB(); const p = 
 app.post('/edit/:id', requireAuth, (req, res) => { const db = getDB(); const p = db.panels[req.params.id]; if (p) fs.writeFileSync(path.join(UPLOAD_DIR, p.file), req.body.code); res.redirect('/'); });
 
 // --- UI HELPERS ---
-function getTimeRemaining(iso) { const diff = new Date(iso) - new Date(); if (diff <= 0) return { text: 'پایان زمان', color: '#ef4444' }; const days = Math.floor(diff / 86400000); const hours = Math.floor((diff % 86400000) / 3600000); let color = '#10b981'; if (days < 3) color = '#f59e0b'; if (days < 1) color = '#ef4444'; return { text: `${days} روز و ${hours} ساعت`, color }; }
+function getTimeRemaining(iso) { const diff = new Date(iso) - new Date(); if (diff <= 0) return { text: 'پایان زمان', color: '#ef4444' }; const days = Math.floor(diff / 86400000); const hours = Math.floor((diff % 86400000) / 3600000); let color = '#10b981'; if (days < 3) color = '#f59e0b'; if (days < 1) color = '#ef4444'; return { text: days + ' روز و ' + hours + ' ساعت', color }; }
 function escapeHTML(str) { return str ? str.replace(/</g, '&lt;').replace(/>/g, '&gt;') : ''; }
 function renderError(msg) { return renderLayout('خطا', `<div class="login-wrap"><div class="glass-strong login-card fade-in-up" style="text-align:center;"><div style="font-size:60px; margin-bottom:16px;">🚫</div><h2 style="font-size:24px; font-weight:900; margin-bottom:12px; color:#ef4444;">${msg}</h2><a href="/" class="btn-neon" style="display:inline-block; text-decoration:none; width:auto; padding:12px 24px;">بازگشت</a></div></div>`); }
 
@@ -415,5 +522,5 @@ function renderLayout(title, content, script = '') {
 // Start Server and Bots
 app.listen(PORT, () => {
   console.log('Nebula Ultra running on ' + PORT);
-  setTimeout(() => initBots(`http://localhost:${PORT}`), 2000); 
+  setTimeout(() => initBots('http://localhost:' + PORT), 2000); 
 });
