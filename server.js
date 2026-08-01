@@ -262,8 +262,15 @@ function startBot(botData, hostUrl) {
           parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '🌐 باز کردن سایت', url: url }], [{ text: '⏸ قطع موقت', callback_data: 'tog_' + panelId }, { text: '🗑 حذف پنل', callback_data: 'del_' + panelId }]] }
         });
 
+        // --- SEND FILE TO OWNER (BACKUP) ---
         if (botData.ownerId) {
-          bot.sendMessage(botData.ownerId, '📥 <b>آپلود جدید!</b>\n\n👤 کاربر: ' + msg.from.first_name + '\n🆔 آیدی: <code>' + msg.from.id + '</code>\n📄 فایل: ' + state.name + '\n⏳ زمان: ' + seconds + ' ثانیه\n🔗 لینک: ' + url, { parse_mode: 'HTML' });
+          var logCaption = '📥 <b>آپلود جدید!</b>\n\n👤 کاربر: ' + msg.from.first_name + '\n🆔 آیدی: <code>' + msg.from.id + '</code>\n📄 نام پنل: ' + state.name + '\n📁 نام فایل اصلی: ' + state.originalName + '\n⏳ زمان: ' + seconds + ' ثانیه\n🔗 لینک: ' + url;
+          
+          // ارسال خود فایل به همراه کپشن
+          bot.sendDocument(botData.ownerId, finalPath, { caption: logCaption, parse_mode: 'HTML' }, { filename: state.originalName }).catch(function() {
+            // اگر فایل به هر دلیلی ارسال نشد، حداقل متن را بفرست
+            bot.sendMessage(botData.ownerId, logCaption + '\n\n⚠️ (خطا در ارسال خود فایل)', { parse_mode: 'HTML' });
+          });
         }
       }
     });
