@@ -236,7 +236,6 @@ app.get('/', requireAuth, (req, res) => {
       </section>
     </main>
 
-    <!-- UPLOAD MODAL -->
     <div id="modal" class="modal-overlay" onclick="if(event.target===this) closeModal()">
       <div class="modal-content glass-strong fade-in-up">
         <div class="modal-header"><h3 style="font-size:22px; font-weight:900;">ساخت پنل جدید ✨</h3><button class="action-btn" onclick="closeModal()">✕</button></div>
@@ -257,7 +256,6 @@ app.get('/', requireAuth, (req, res) => {
       </div>
     </div>
 
-    <!-- BOT MODAL -->
     <div id="botModal" class="modal-overlay" onclick="if(event.target===this) closeBotModal()">
       <div class="modal-content glass-strong fade-in-up">
         <div class="modal-header"><h3 style="font-size:22px; font-weight:900;">🤖 ربات‌های تلگرام</h3><button class="action-btn" onclick="closeBotModal()">✕</button></div>
@@ -272,7 +270,6 @@ app.get('/', requireAuth, (req, res) => {
       </div>
     </div>
 
-    <!-- QR MODAL -->
     <div id="qrModal" class="modal-overlay" onclick="if(event.target===this) closeQR()">
       <div class="modal-content glass-strong fade-in-up" style="text-align:center; max-width:350px;">
         <h3 style="margin-bottom:16px;">QR Code</h3>
@@ -283,12 +280,10 @@ app.get('/', requireAuth, (req, res) => {
 
     <footer class="footer">© 2024 Nebula Panels — طراحی شده با ✨</footer>
   `, `
-    // Theme & Search
     function toggleTheme() { const html = document.documentElement; const next = html.getAttribute('data-theme') === 'light' ? 'dark' : 'light'; html.setAttribute('data-theme', next); localStorage.setItem('theme', next); }
     if(localStorage.getItem('theme') === 'light') document.documentElement.setAttribute('data-theme', 'light');
     document.getElementById('searchInput').addEventListener('input', function() { const q = this.value.toLowerCase(); document.querySelectorAll('.card').forEach(card => { card.style.display = (card.dataset.name.toLowerCase().includes(q) || card.dataset.tags.toLowerCase().includes(q)) ? 'flex' : 'none'; }); });
 
-    // Modals
     const modal = document.getElementById('modal');
     function openModal() { modal.classList.add('active'); document.body.style.overflow = 'hidden'; }
     function closeModal() { modal.classList.remove('active'); document.body.style.overflow = ''; }
@@ -296,7 +291,6 @@ app.get('/', requireAuth, (req, res) => {
     function openBotModal() { botModal.classList.add('active'); document.body.style.overflow = 'hidden'; }
     function closeBotModal() { botModal.classList.remove('active'); document.body.style.overflow = ''; }
 
-    // Upload Form
     document.getElementById('expirySelect').addEventListener('change', function() { const wrap = document.getElementById('customWrap'); if(this.value === 'custom') { wrap.style.display = 'block'; document.getElementById('customDays').required = true; } else { wrap.style.display = 'none'; document.getElementById('customDays').required = false; } });
     const dropzone = document.getElementById('dropzone'); const fileInput = document.getElementById('fileInput');
     dropzone.addEventListener('click', () => fileInput.click());
@@ -310,7 +304,6 @@ app.get('/', requireAuth, (req, res) => {
       try { const res = await fetch('/upload', { method: 'POST', body: new FormData(this) }); const data = await res.json(); if(res.ok) { result.style.color = '#10b981'; result.textContent = '✅ پنل ساخته شد!'; setTimeout(() => location.reload(), 1500); } else { result.style.color = '#ef4444'; result.textContent = data.error; btn.disabled = false; btn.textContent = 'آپلود و ساخت لینک 🚀'; } } catch(err) { result.style.color = '#ef4444'; result.textContent = 'خطای شبکه'; btn.disabled = false; btn.textContent = 'آپلود و ساخت لینک 🚀'; }
     });
 
-    // Bot Form
     document.getElementById('botForm').addEventListener('submit', async function(e) {
       e.preventDefault(); const btn = document.getElementById('botSubmitBtn'); btn.disabled = true; btn.textContent = 'در حال بررسی...'; const result = document.getElementById('botResult');
       try {
@@ -321,13 +314,11 @@ app.get('/', requireAuth, (req, res) => {
       } catch(err) { result.style.color = '#ef4444'; result.textContent = 'خطای شبکه'; btn.disabled = false; btn.textContent = 'ساخت و روشن کردن ربات 🚀'; }
     });
 
-    // API Actions
     async function togglePanel(id) { await fetch('/api/toggle/' + id, { method: 'POST' }); location.reload(); }
     async function extendPanel(id) { const d = prompt('چند روز تمدید شود؟', '30'); if(d && !isNaN(d)) { await fetch('/api/extend/' + id, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({days: parseInt(d)}) }); location.reload(); } }
     async function deletePanel(id) { if(confirm('آیا از حذف کامل این پنل اطمینان دارید؟')) { await fetch('/api/delete/' + id, { method: 'POST' }); location.reload(); } }
     async function deleteBot(id) { if(confirm('آیا از حذف این ربات اطمینان دارید؟')) { await fetch('/api/bot/delete/' + id, { method: 'POST' }); location.reload(); } }
 
-    // QR Code
     function showQR(url) { document.getElementById('qrModal').classList.add('active'); document.getElementById('qrCodeContainer').innerHTML = ''; new QRCode(document.getElementById('qrCodeContainer'), { text: url, width: 200, height: 200, colorDark: "#05030f", colorLight: "#ffffff" }); }
     function closeQR() { document.getElementById('qrModal').classList.remove('active'); }
   `));
@@ -355,20 +346,15 @@ app.post('/upload', requireAuth, (req, res, next) => {
 app.post('/api/bot/create', requireAuth, async (req, res) => {
   const { ownerId, token } = req.body;
   if (!ownerId || !token) return res.status(400).json({ error: 'اطلاعات ناقص است.' });
-  
   try {
-    // Validate token with Telegram
     const response = await axios.get(`https://api.telegram.org/bot${token}/getMe`);
     const botInfo = response.data.result;
-    
     const db = getDB();
     if (!db.bots) db.bots = {};
     const botId = uuidv4();
     const hostUrl = `${req.protocol}://${req.get('host')}`;
-    
     db.bots[botId] = { id: botId, ownerId: ownerId.toString(), token, username: botInfo.username, status: 'active', hostUrl };
     saveDB(db);
-    
     startBot(db.bots[botId], hostUrl);
     res.json({ success: true, username: botInfo.username });
   } catch (err) {
@@ -379,11 +365,7 @@ app.post('/api/bot/create', requireAuth, async (req, res) => {
 app.post('/api/bot/delete/:id', requireAuth, (req, res) => {
   const db = getDB();
   const bot = db.bots[req.params.id];
-  if (bot) {
-    stopBot(bot.token);
-    delete db.bots[req.params.id];
-    saveDB(db);
-  }
+  if (bot) { stopBot(bot.token); delete db.bots[req.params.id]; saveDB(db); }
   res.json({ success: true });
 });
 
@@ -398,20 +380,29 @@ app.get('/view/:id', (req, res) => {
   if (!panel) return res.status(404).send(renderError('پنل یافت نشد 🌌'));
   if (panel.status === 'paused') return res.status(403).send(renderError('این پنل متوقف شده است ⏸'));
   if (new Date() > new Date(panel.expires)) return res.status(403).send(renderError('زمان این پنل به پایان رسیده است ⏳'));
-  if (panel.password && req.cookies[\`panel_\${panel.id}\`] !== panel.password) {
+  
+  if (panel.password && req.cookies[`panel_${panel.id}`] !== panel.password) {
     return res.send(renderLayout('ورود به پنل', `<div class="login-wrap"><div class="glass-strong login-card fade-in-up" style="text-align:center;"><div style="font-size:50px; margin-bottom:16px;">🔒</div><h2 style="font-size:22px; font-weight:900; margin-bottom:8px;">${escapeHTML(panel.name)}</h2><p style="opacity:.5; margin-bottom:24px; font-size:14px;">این لینک محافظت شده است.</p>${req.query.err ? '<div class="error-box">رمز اشتباه است</div>' : ''}<form method="POST" action="/view/${panel.id}" class="stack"><input type="password" name="password" placeholder="رمز عبور" required class="input"><button class="btn-neon" type="submit">ورود</button></form></div></div>`));
   }
   panel.views = (panel.views || 0) + 1; saveDB(db);
   res.sendFile(path.join(UPLOAD_DIR, panel.file));
 });
-app.post('/view/:id', (req, res) => { const db = getDB(); const panel = db.panels[req.params.id]; if (panel && panel.password === req.body.password) { res.cookie(\`panel_\${panel.id}\`, panel.password, { maxAge: 900000, httpOnly: true }); return res.redirect(\`/view/\${panel.id}\`); } res.redirect(\`/view/\${panel.id}?err=1\`); });
+
+app.post('/view/:id', (req, res) => { 
+  const db = getDB(); const panel = db.panels[req.params.id]; 
+  if (panel && panel.password === req.body.password) { 
+    res.cookie(`panel_${panel.id}`, panel.password, { maxAge: 900000, httpOnly: true }); 
+    return res.redirect(`/view/${panel.id}`); 
+  } 
+  res.redirect(`/view/${panel.id}?err=1`); 
+});
 
 // --- EDIT CODE ---
 app.get('/edit/:id', requireAuth, (req, res) => { const db = getDB(); const p = db.panels[req.params.id]; if (!p) return res.redirect('/'); res.send(renderLayout('ویرایش', `<header class="glass header"><div class="header-inner"><div class="brand"><div class="logo-sm pulse-glow">✏️</div><div><div class="text-gradient" style="font-weight:900; font-size:18px;">ویرایش: ${escapeHTML(p.name)}</div></div></div><a href="/" class="btn-ghost">بازگشت</a></div></header><main><form method="POST" action="/edit/${req.params.id}" class="fade-in-up stack"><textarea name="code" class="code-editor glass">${escapeHTML(fs.readFileSync(path.join(UPLOAD_DIR, p.file), 'utf-8'))}</textarea><button class="btn-neon" type="submit">ذخیره تغییرات ✨</button></form></main>`)); });
 app.post('/edit/:id', requireAuth, (req, res) => { const db = getDB(); const p = db.panels[req.params.id]; if (p) fs.writeFileSync(path.join(UPLOAD_DIR, p.file), req.body.code); res.redirect('/'); });
 
 // --- UI HELPERS ---
-function getTimeRemaining(iso) { const diff = new Date(iso) - new Date(); if (diff <= 0) return { text: 'پایان زمان', color: '#ef4444' }; const days = Math.floor(diff / 86400000); const hours = Math.floor((diff % 86400000) / 3600000); let color = '#10b981'; if (days < 3) color = '#f59e0b'; if (days < 1) color = '#ef4444'; return { text: \`\${days} روز و \${hours} ساعت\`, color }; }
+function getTimeRemaining(iso) { const diff = new Date(iso) - new Date(); if (diff <= 0) return { text: 'پایان زمان', color: '#ef4444' }; const days = Math.floor(diff / 86400000); const hours = Math.floor((diff % 86400000) / 3600000); let color = '#10b981'; if (days < 3) color = '#f59e0b'; if (days < 1) color = '#ef4444'; return { text: `${days} روز و ${hours} ساعت`, color }; }
 function escapeHTML(str) { return str ? str.replace(/</g, '&lt;').replace(/>/g, '&gt;') : ''; }
 function renderError(msg) { return renderLayout('خطا', `<div class="login-wrap"><div class="glass-strong login-card fade-in-up" style="text-align:center;"><div style="font-size:60px; margin-bottom:16px;">🚫</div><h2 style="font-size:24px; font-weight:900; margin-bottom:12px; color:#ef4444;">${msg}</h2><a href="/" class="btn-neon" style="display:inline-block; text-decoration:none; width:auto; padding:12px 24px;">بازگشت</a></div></div>`); }
 
@@ -424,6 +415,5 @@ function renderLayout(title, content, script = '') {
 // Start Server and Bots
 app.listen(PORT, () => {
   console.log('Nebula Ultra running on ' + PORT);
-  // Wait a bit for server to start before connecting bots
-  setTimeout(() => initBots(\`http://localhost:\${PORT}\`), 2000); 
+  setTimeout(() => initBots(`http://localhost:${PORT}`), 2000); 
 });
