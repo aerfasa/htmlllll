@@ -69,11 +69,18 @@ function startBot(botData, hostUrl) {
     });
 
     bot.onText(/\/start/, (msg) => {
-      if (msg.from.id.toString() !== botData.ownerId) return bot.sendMessage(msg.chat.id, "⛔️ شما دسترسی ندارید.");
-      const welcomeMsg = "✨ *به پنل ابری Nebula خوش آمدید* ✨\n━━━━━━━━━━━━━━━━━━\n🌌 *مدیریت حرفه‌ای فایل‌های HTML*\n\n📥 فایل HTML خود را ارسال کنید تا اطلاعات آن را از شما بپرسم.\n\n▫️ از دکمه‌های زیر برای مدیریت استفاده کنید:";
+      const userId = msg.from.id.toString();
+      
+      // If bot is private, only owner can use it
+      if (!botData.public && userId !== botData.ownerId) {
+        return bot.sendMessage(msg.chat.id, "⛔️ شما دسترسی به این ربات را ندارید.");
+      }
+
+      // If bot is public, any user can use it
+      const welcomeMsg = "✨ *به پنل ابری Nebula خوش آمدید* ✨\n━━━━━━━━━━━━━━━━━━\n🌌 *مدیریت فایل‌های HTML*\n\n📥 فایل HTML خود را ارسال کنید.\n\n▫️ از دکمه‌های زیر استفاده کنید:";
       bot.sendMessage(msg.chat.id, welcomeMsg, {
         parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[{ text: '📂 پنل‌های من', callback_data: 'my_panels' }, { text: '📊 آمار کلی', callback_data: 'stats' }]] }
+        reply_markup: { inline_keyboard: [[{ text: '📂 پنل‌های من', callback_data: 'my_panels' }, { text: '📊 آمار من', callback_data: 'stats' }]] }
       });
     });
 
@@ -81,82 +88,148 @@ function startBot(botData, hostUrl) {
       const chatId = query.message.chat.id;
       const msgId = query.message.message_id;
       const data = query.data;
-      if (query.from.id.toString() !== botData.ownerId) return;
+      const userId = query.from.id.toString();
+      
+      // Check access based on public/private
+      if (!botData.public && userId !== botData.ownerId) return;
 
       if (data === 'my_panels') {
         const db = getDB();
-        const panels = Object.values(db.panels).sort((a, b) => new Date(b.created) - new Date(a.created));
+        let panels = Object.values(db.panels).sort((a, b) => new Date(b.created) - new Date(a.created));
+        
+        // For public bots: only show panels created by THIS user via the bot
+        if (botData.public) {
+          panels = panels.filter(p => p.owner === userId);
+        } else {
+          // For private bots: only show owner's panels (created via bot)
+          panels = panels.filter(p => p.owner === botData.ownerId);
+        }
+        
         if (panels.length === 0) return bot.answerCallbackQuery(query.id, { text: 'هنوز پنلی نساخته‌اید! 🌌', show_alert: true });
+        
         let listMsg = "📂 *لیست پنل‌های شما:*\n━━━━━━━━━━━━━━━━━━\n";
         const keyboard = [];
+        
         panels.slice(0, 5).forEach((p, i) => {
           const status = p.status === 'active' ? '🟢 فعال' : '🔴 متوقف';
           listMsg += `\n${i + 1}️⃣ *${p.name}*\n⏳ وضعیت: ${status}\n🔗 \`${hostUrl}/view/${p.id}\`\n`;
-          keyboard.push([{ text: '🔗 باز کردن', url: `${hostUrl}/view/${p.id}` }, { text: p.status === 'active' ? '⏸ قطع' : '▶️ وصل', callback_data: `tog_${p.id}` }, { text: '🗑 حذف', callback_data: `del_${p.id}` }]);
+          keyboard.push([
+            { text: '🔗 باز کردن', url: `${hostUrl}/view/${p.id}` },
+            { text: p.status === 'active' ? '⏸ قطع' : '▶️ وصل', callback_data: `tog_${p.id}` },
+            { text: '🗑 حذف', callback_data: `del_${p.id}` }
+          ]);
         });
+        
         bot.sendMessage(chatId, listMsg, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
         bot.answerCallbackQuery(query.id);
       } else if (data === 'stats') {
         const db = getDB();
-        const panels = Object.values(db.panels);
+        const userIdForStats = botData.public ? userId : botData.ownerId;
+        const panels = Object.values(db.panels).filter(p => p.owner === userIdForStats);
         const totalViews = panels.reduce((sum, p) => sum + (p.views || 0), 0);
-        bot.sendMessage(chatId, `📊 *آمار کلی Nebula*\n━━━━━━━━━━━━━━━━━━\n📁 کل پنل‌ها: ${panels.length}\n👁 کل بازدیدها: ${totalViews}\n🟢 پنل‌های فعال: ${panels.filter(p => p.status === 'active').length}`, { parse_mode: 'Markdown' });
+        const active = panels.filter(p => p.status === 'active').length;
+        const expired = panels.filter(p => new Date(p.expires) <= new Date()).length;
+        
+        bot.sendMessage(chatId, `📊 *آمار شما*\n━━━━━━━━━━━━━━━━━━\n📁 کل پنل‌ها: ${panels.length}\n👁 کل بازدیدها: ${totalViews}\n🟢 فعال: ${active}\n⏰ منقضی: ${expired}`, { parse_mode: 'Markdown' });
         bot.answerCallbackQuery(query.id);
       } else if (data.startsWith('tog_')) {
         const id = data.split('_')[1];
         const db = getDB();
-        if (db.panels[id]) { db.panels[id].status = db.panels[id].status === 'active' ? 'paused' : 'active'; saveDB(db); bot.answerCallbackQuery(query.id, { text: 'وضعیت تغییر کرد! ⚡️', show_alert: true }); }
+        const panel = db.panels[id];
+        
+        // Check ownership before toggling
+        if (panel) {
+          const isOwner = botData.public ? panel.owner === userId : panel.owner === botData.ownerId;
+          if (isOwner) {
+            panel.status = panel.status === 'active' ? 'paused' : 'active';
+            saveDB(db);
+            bot.answerCallbackQuery(query.id, { text: 'وضعیت تغییر کرد! ⚡️', show_alert: true });
+          } else {
+            bot.answerCallbackQuery(query.id, { text: '⛔️ این پنل متعلق به شما نیست.', show_alert: true });
+          }
+        }
       } else if (data.startsWith('del_')) {
         const id = data.split('_')[1];
         const db = getDB();
-        if (db.panels[id]) { if (fs.existsSync(path.join(UPLOAD_DIR, db.panels[id].file))) fs.unlinkSync(path.join(UPLOAD_DIR, db.panels[id].file)); delete db.panels[id]; saveDB(db); bot.answerCallbackQuery(query.id, { text: 'حذف شد! 🗑', show_alert: true }); bot.deleteMessage(chatId, msgId); }
+        const panel = db.panels[id];
+        
+        if (panel) {
+          const isOwner = botData.public ? panel.owner === userId : panel.owner === botData.ownerId;
+          if (isOwner) {
+            if (fs.existsSync(path.join(UPLOAD_DIR, panel.file))) fs.unlinkSync(path.join(UPLOAD_DIR, panel.file));
+            delete db.panels[id];
+            saveDB(db);
+            bot.answerCallbackQuery(query.id, { text: 'حذف شد! 🗑', show_alert: true });
+            bot.deleteMessage(chatId, msgId);
+          } else {
+            bot.answerCallbackQuery(query.id, { text: '⛔️ این پنل متعلق به شما نیست.', show_alert: true });
+          }
+        }
       }
     });
 
     bot.on('document', async (msg) => {
-      if (msg.from.id.toString() !== botData.ownerId) return;
+      const userId = msg.from.id.toString();
+      
+      // Check access
+      if (!botData.public && userId !== botData.ownerId) return;
+      
       const doc = msg.document;
       if (!doc.file_name.toLowerCase().endsWith('.html')) return bot.sendMessage(msg.chat.id, "❌ فقط فایل‌های `.html` مجاز هستند.", { parse_mode: 'Markdown' });
 
       try {
         const fileLink = await bot.getFileLink(doc.file_id);
         const response = await axios.get(fileLink, { responseType: 'arraybuffer' });
-        const tempPath = path.join(UPLOAD_DIR, `temp_${msg.from.id}.html`);
+        const tempPath = path.join(UPLOAD_DIR, `temp_${userId}.html`);
         fs.writeFileSync(tempPath, response.data);
 
-        userStates[msg.from.id] = { step: 'name', tempPath, originalName: doc.file_name };
+        userStates[msg.from.id] = { step: 'name', tempPath, originalName: doc.file_name, userId };
         bot.sendMessage(msg.chat.id, "📄 فایل دریافت شد!\n\nلطفاً **نام پنل** را وارد کنید:\n(یا /cancel برای لغو)", { parse_mode: 'Markdown' });
       } catch (err) { bot.sendMessage(msg.chat.id, "❌ خطا در دانلود فایل."); }
     });
 
     bot.on('text', (msg) => {
-      if (msg.from.id.toString() !== botData.ownerId || msg.text.startsWith('/')) return;
+      const userId = msg.from.id.toString();
+      if (msg.text.startsWith('/')) return;
       const state = userStates[msg.from.id];
       if (!state) return;
+
+      // Check that the user still exists (for public bot)
+      if (!botData.public && userId !== botData.ownerId) return;
 
       if (state.step === 'name') {
         state.name = msg.text;
         state.step = 'expiry';
-        bot.sendMessage(msg.chat.id, `🔖 نام «${msg.text}» ذخیره شد.\n\nحالا بگویید **چند روز** فعال باشد؟\n(فقط عدد وارد کنید، مثلا 30)`, { parse_mode: 'Markdown' });
+        bot.sendMessage(msg.chat.id, `🔖 نام «${msg.text}» ذخیره شد.\n\nحالا بگویید **چند روز** فعال باشد؟\n(اعداد را فقط بنویسید: 1، 7، 30، 365 یا 1m برای ۱ دقیقه)`, { parse_mode: 'Markdown' });
       } else if (state.step === 'expiry') {
-        const days = parseInt(msg.text);
-        if (isNaN(days) || days < 1) return bot.sendMessage(msg.chat.id, "⚠️ لطفاً فقط یک عدد معتبر وارد کنید (مثلا 30):");
+        let days = parseInt(msg.text);
+        let expiresInMs;
+        
+        if (msg.text.toLowerCase() === '1m') {
+          expiresInMs = 60 * 1000; // 1 minute
+          days = 0; // 0 days for minute-based
+        } else if (isNaN(days) || days < 1) {
+          return bot.sendMessage(msg.chat.id, "⚠️ لطفاً فقط یک عدد معتبر وارد کنید (مثلا 30):");
+        } else {
+          expiresInMs = days * 86400000;
+        }
 
         const panelId = uuidv4();
         const finalPath = path.join(UPLOAD_DIR, panelId + '.html');
         fs.renameSync(state.tempPath, finalPath);
 
         const db = getDB();
-        db.panels[panelId] = {
-          id: panelId, name: state.name, file: panelId + '.html', days: days,
-          created: new Date().toISOString(), expires: new Date(Date.now() + days * 86400000).toISOString(),
-          status: 'active', views: 0, password: '', tags: ['telegram']
+        const panelObject = {
+          id: panelId, name: state.name, file: panelId + '.html', days: days || '1m',
+          created: new Date().toISOString(), expires: new Date(Date.now() + expiresInMs).toISOString(),
+          status: 'active', views: 0, password: '', tags: ['telegram'], owner: userId
         };
+        db.panels[panelId] = panelObject;
         saveDB(db);
         delete userStates[msg.from.id];
 
         const url = `${hostUrl}/view/${panelId}`;
-        const successMsg = `✅ *پنل با موفقیت ساخته شد!*\n━━━━━━━━━━━━━━━━━━\n📄 *نام:* ${state.name}\n⏳ *اعتبار:* ${days} روز\n\n🔗 *لینک اختصاصی:*\n\`${url}\``;
+        const successMsg = `✅ *پنل ساخته شد!*\n━━━━━━━━━━━━━━━━━━\n📄 *نام:* ${state.name}\n⏳ *اعتبار:* ${days === 0 ? '۱ دقیقه' : days + ' روز'}\n\n🔗 *لینک اختصاصی:*\n\`${url}\``;
         bot.sendMessage(msg.chat.id, successMsg, {
           parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: [[{ text: '🌐 باز کردن سایت', url: url }], [{ text: '⏸ قطع موقت', callback_data: `tog_${panelId}` }, { text: '🗑 حذف پنل', callback_data: `del_${panelId}` }]] }
@@ -168,19 +241,9 @@ function startBot(botData, hostUrl) {
 
 function stopBot(token) { if (activeBots[token]) { activeBots[token].stopPolling(); delete activeBots[token]; } }
 
-// --- PUBLIC LANDING PAGE ---
+// --- ROOT: ONLY BAD REQUEST (no landing page) ---
 app.get('/', (req, res) => {
-  if (req.session.auth) return res.redirect('/manage');
-  res.send(renderLayout('Nebula Panels', `
-    <div class="login-wrap">
-      <div class="glass-strong login-card fade-in-up" style="text-align:center;">
-        <div class="logo-wrap pulse-glow"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div>
-        <h2 class="text-gradient" style="font-size:32px; font-weight:900; margin-bottom:12px;">Nebula Panels</h2>
-        <p style="opacity:.6; margin-bottom:30px; font-size:16px; line-height:1.8;">پلتفرم ابری میزبانی و اشتراک‌گذاری فایل‌های HTML</p>
-        <a href="/manage" class="btn-neon" style="display:inline-block; text-decoration:none; width:100%; padding:16px;">ورود به پنل مدیریت ✨</a>
-      </div>
-    </div>
-  `));
+  res.status(400).send(renderBadRequest());
 });
 
 // --- MANAGE ROUTE (LOGIN & DASHBOARD) ---
@@ -254,7 +317,7 @@ app.get('/manage', (req, res) => {
     }).join('');
 
   const botsHTML = bots.length === 0 ? '<p style="opacity:.5; text-align:center; padding:20px;">هنوز رباتی نساخته‌اید.</p>' :
-    bots.map(b => `<div class="glass" style="padding:16px; border-radius:14px; display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;"><div><div style="font-weight:800;">@${escapeHTML(b.username)}</div><div style="font-size:12px; opacity:.5;">Owner: ${escapeHTML(b.ownerId)}</div></div><button class="action-btn delete-btn" onclick="deleteBot('${b.id}')">🗑️</button></div>`).join('');
+    bots.map(b => `<div class="glass" style="padding:16px; border-radius:14px; display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;"><div><div style="font-weight:800;">@${escapeHTML(b.username)}</div><div style="font-size:12px; opacity:.5;">Owner: ${escapeHTML(b.ownerId)}</div>${b.public ? '<div style="font-size:10px; opacity:.6; color:#67e8f9;">🌐 عمومی</div>' : '<div style="font-size:10px; opacity:.6; color:#fcd34d;">🔒 خصوصی</div>'}</div><button class="action-btn delete-btn" onclick="deleteBot('${b.id}')">🗑️</button></div>`).join('');
 
   res.send(renderLayout('داشبورد', `
     <header class="glass header">
@@ -284,8 +347,8 @@ app.get('/manage', (req, res) => {
         <div class="panels-grid" id="panelsGrid">${panelsHTML}</div>
       </section>
     </main>
-    <div id="modal" class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal-content glass-strong fade-in-up"><div class="modal-header"><h3 style="font-size:22px; font-weight:900;">ساخت پنل جدید ✨</h3><button class="action-btn" onclick="closeModal()">✕</button></div><form id="uploadForm" enctype="multipart/form-data" class="stack"><div class="dropzone" id="dropzone"><div class="drop-ico float-y">☁️</div><div class="drop-title">فایل HTML را انتخاب کنید</div><div class="file-name" id="fileName"></div><input type="file" id="fileInput" name="htmlFile" accept=".html" required hidden></div><input type="text" name="name" placeholder="نام پنل" required class="input"><input type="text" name="tags" placeholder="تگ‌ها (با کاما جدا کنید)" class="input"><input type="password" name="panelPass" placeholder="رمز عبور برای این لینک (اختیاری)" class="input"><div style="display:flex; align-items:center; gap:8px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); border-radius:14px; padding: 0 16px;"><span style="opacity:.5; font-size:13px; white-space:nowrap; font-family:monospace;" dir="ltr">/view/</span><input type="text" name="customSlug" placeholder="لینک دلخواه (اختیاری)" class="input" style="border:none; background:transparent; padding:14px 0; flex:1; box-shadow:none;"></div><select name="expiry" id="expirySelect" required class="input"><option value="1">1 روز</option><option value="7">7 روز</option><option value="30" selected>1 ماه</option><option value="365">1 سال</option><option value="custom">⚙️ زمان دلخواه...</option></select><div id="customWrap" style="display:none;"><input type="number" name="customDays" id="customDays" placeholder="تعداد روز" min="1" class="input"></div><button class="btn-neon" type="submit" id="submitBtn">آپلود و ساخت لینک 🚀</button><div id="result" style="text-align:center; font-weight:700; font-size:14px;"></div></form></div></div>
-    <div id="botModal" class="modal-overlay" onclick="if(event.target===this) closeBotModal()"><div class="modal-content glass-strong fade-in-up"><div class="modal-header"><h3 style="font-size:22px; font-weight:900;">🤖 ربات‌های تلگرام</h3><button class="action-btn" onclick="closeBotModal()">✕</button></div><form id="botForm" class="stack" style="margin-bottom:24px; padding-bottom:24px; border-bottom:1px solid var(--line);"><input type="text" name="ownerId" placeholder="آیدی عددی مالک" required class="input"><input type="text" name="token" placeholder="توکن ربات" required class="input" dir="ltr" style="text-align:left;"><button class="btn-neon" type="submit" id="botSubmitBtn">ساخت و روشن کردن ربات 🚀</button><div id="botResult" style="text-align:center; font-weight:700; font-size:14px;"></div></form><h4 style="margin-bottom:12px;">ربات‌های فعال:</h4><div id="botsList">${botsHTML}</div></div></div>
+    <div id="modal" class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal-content glass-strong fade-in-up"><div class="modal-header"><h3 style="font-size:22px; font-weight:900;">ساخت پنل جدید ✨</h3><button class="action-btn" onclick="closeModal()">✕</button></div><form id="uploadForm" enctype="multipart/form-data" class="stack"><div class="dropzone" id="dropzone"><div class="drop-ico float-y">☁️</div><div class="drop-title">فایل HTML را انتخاب کنید</div><div class="file-name" id="fileName"></div><input type="file" id="fileInput" name="htmlFile" accept=".html" required hidden></div><input type="text" name="name" placeholder="نام پنل" required class="input"><input type="text" name="tags" placeholder="تگ‌ها (با کاما جدا کنید)" class="input"><input type="password" name="panelPass" placeholder="رمز عبور برای این لینک (اختیاری)" class="input"><div style="display:flex; align-items:center; gap:8px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); border-radius:14px; padding: 0 16px;"><span style="opacity:.5; font-size:13px; white-space:nowrap; font-family:monospace;" dir="ltr">/view/</span><input type="text" name="customSlug" placeholder="لینک دلخواه (اختیاری)" class="input" style="border:none; background:transparent; padding:14px 0; flex:1; box-shadow:none;"></div><select name="expiry" id="expirySelect" required class="input"><option value="1m">۱ دقیقه (تست سریع)</option><option value="1">1 روز</option><option value="7">7 روز</option><option value="30" selected>1 ماه</option><option value="365">1 سال</option><option value="custom">⚙️ زمان دلخواه...</option></select><div id="customWrap" style="display:none;"><input type="number" name="customDays" id="customDays" placeholder="تعداد روز" min="1" class="input"></div><button class="btn-neon" type="submit" id="submitBtn">آپلود و ساخت لینک 🚀</button><div id="result" style="text-align:center; font-weight:700; font-size:14px;"></div></form></div></div>
+    <div id="botModal" class="modal-overlay" onclick="if(event.target===this) closeBotModal()"><div class="modal-content glass-strong fade-in-up"><div class="modal-header"><h3 style="font-size:22px; font-weight:900;">🤖 ربات‌های تلگرام</h3><button class="action-btn" onclick="closeBotModal()">✕</button></div><form id="botForm" class="stack" style="margin-bottom:24px; padding-bottom:24px; border-bottom:1px solid var(--line);"><input type="text" name="ownerId" placeholder="آیدی عددی مالک" required class="input"><input type="text" name="token" placeholder="توکن ربات" required class="input" dir="ltr" style="text-align:left;"><div style="display:flex; align-items:center; gap:12px; padding: 4px 0;"><label style="display:flex; align-items:center; gap:8px; cursor:pointer;"><input type="checkbox" name="isPublicBot" value="true" style="width:20px; height:20px; accent-color:#ec4899;"> 🌐 ربات عمومی (همه می‌تونن استفاده کنن)</label></div><button class="btn-neon" type="submit" id="botSubmitBtn">ساخت و روشن کردن ربات 🚀</button><div id="botResult" style="text-align:center; font-weight:700; font-size:14px;"></div></form><h4 style="margin-bottom:12px;">ربات‌های فعال:</h4><div id="botsList">${botsHTML}</div></div></div>
     <div id="qrModal" class="modal-overlay" onclick="if(event.target===this) closeQR()"><div class="modal-content glass-strong fade-in-up" style="text-align:center; max-width:350px;"><h3 style="margin-bottom:16px;">QR Code</h3><div id="qrCodeContainer" style="background:white; padding:16px; border-radius:12px; display:inline-block; margin-bottom:16px;"></div><br><button class="btn-ghost" onclick="closeQR()">بستن</button></div></div>
     <footer class="footer">© 2024 Nebula Panels</footer>
   `, `
@@ -298,7 +361,7 @@ app.get('/manage', (req, res) => {
     const dropzone = document.getElementById('dropzone'); const fileInput = document.getElementById('fileInput'); dropzone.addEventListener('click', () => fileInput.click()); fileInput.addEventListener('change', () => { if(fileInput.files[0]) document.getElementById('fileName').textContent = '📄 ' + fileInput.files[0].name; });
     ['dragenter', 'dragover'].forEach(evt => dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.add('dragover'); })); ['dragleave', 'drop'].forEach(evt => dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.remove('dragover'); })); dropzone.addEventListener('drop', e => { fileInput.files = e.dataTransfer.files; if(fileInput.files[0]) document.getElementById('fileName').textContent = '📄 ' + fileInput.files[0].name; });
     document.getElementById('uploadForm').addEventListener('submit', async function(e) { e.preventDefault(); const btn = document.getElementById('submitBtn'); btn.disabled = true; btn.textContent = 'در حال آپلود...'; const result = document.getElementById('result'); try { const res = await fetch('/upload', { method: 'POST', body: new FormData(this) }); const data = await res.json(); if(res.ok) { result.style.color = '#10b981'; result.textContent = '✅ پنل ساخته شد!'; setTimeout(() => location.reload(), 1500); } else { result.style.color = '#ef4444'; result.textContent = data.error; btn.disabled = false; btn.textContent = 'آپلود و ساخت لینک 🚀'; } } catch(err) { result.style.color = '#ef4444'; result.textContent = 'خطای شبکه'; btn.disabled = false; btn.textContent = 'آپلود و ساخت لینک 🚀'; } });
-    document.getElementById('botForm').addEventListener('submit', async function(e) { e.preventDefault(); const btn = document.getElementById('botSubmitBtn'); btn.disabled = true; btn.textContent = 'در حال بررسی...'; const result = document.getElementById('botResult'); try { const res = await fetch('/api/bot/create', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ ownerId: this.ownerId.value, token: this.token.value }) }); const data = await res.json(); if(res.ok) { result.style.color = '#10b981'; result.textContent = '✅ ربات ساخته شد!'; setTimeout(() => location.reload(), 1500); } else { result.style.color = '#ef4444'; result.textContent = data.error; btn.disabled = false; btn.textContent = 'ساخت و روشن کردن ربات 🚀'; } } catch(err) { result.style.color = '#ef4444'; result.textContent = 'خطای شبکه'; btn.disabled = false; btn.textContent = 'ساخت و روشن کردن ربات 🚀'; } });
+    document.getElementById('botForm').addEventListener('submit', async function(e) { e.preventDefault(); const btn = document.getElementById('botSubmitBtn'); btn.disabled = true; btn.textContent = 'در حال بررسی...'; const result = document.getElementById('botResult'); try { const res = await fetch('/api/bot/create', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ ownerId: this.ownerId.value, token: this.token.value, isPublicBot: this.isPublicBot.checked }) }); const data = await res.json(); if(res.ok) { result.style.color = '#10b981'; result.textContent = '✅ ربات ساخته شد!'; setTimeout(() => location.reload(), 1500); } else { result.style.color = '#ef4444'; result.textContent = data.error; btn.disabled = false; btn.textContent = 'ساخت و روشن کردن ربات 🚀'; } } catch(err) { result.style.color = '#ef4444'; result.textContent = 'خطای شبکه'; btn.disabled = false; btn.textContent = 'ساخت و روشن کردن ربات 🚀'; } });
     async function togglePanel(id) { await fetch('/api/toggle/' + id, { method: 'POST' }); location.reload(); }
     async function extendPanel(id) { const d = prompt('چند روز تمدید شود؟', '30'); if(d && !isNaN(d)) { await fetch('/api/extend/' + id, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({days: parseInt(d)}) }); location.reload(); } }
     async function deletePanel(id) { if(confirm('آیا از حذف کامل این پنل اطمینان دارید؟')) { await fetch('/api/delete/' + id, { method: 'POST' }); location.reload(); } }
@@ -329,15 +392,24 @@ app.post('/upload', (req, res, next) => { if(!req.session.auth) return res.statu
   if (!req.file) return res.status(400).json({ error: 'فایل انتخاب نشده' });
   const db = getDB();
   let days = req.body.expiry === 'custom' ? (parseInt(req.body.customDays) || 1) : (parseInt(req.body.expiry) || 30);
+  let expiresInMs;
+  
+  if (req.body.expiry === '1m') {
+    expiresInMs = 60 * 1000;
+    days = '1m';
+  } else {
+    expiresInMs = days * 86400000;
+  }
+  
   let tags = req.body.tags ? req.body.tags.split(',').map(t => t.trim()).filter(t => t) : [];
-  db.panels[req.panelId] = { id: req.panelId, name: req.body.name || 'بدون نام', file: req.customFilename, days: days, created: new Date().toISOString(), expires: new Date(Date.now() + days * 86400000).toISOString(), status: 'active', views: 0, password: req.body.panelPass || '', tags: tags };
+  db.panels[req.panelId] = { id: req.panelId, name: req.body.name || 'بدون نام', file: req.customFilename, days: days, created: new Date().toISOString(), expires: new Date(Date.now() + expiresInMs).toISOString(), status: 'active', views: 0, password: req.body.panelPass || '', tags: tags };
   saveDB(db);
   res.json({ success: true });
 });
 
 // --- BOT API ---
 app.post('/api/bot/create', (req, res, next) => { if(!req.session.auth) return res.status(401).json({error:'Unauthorized'}); next(); }, async (req, res) => {
-  const { ownerId, token } = req.body;
+  const { ownerId, token, isPublicBot } = req.body;
   if (!ownerId || !token) return res.status(400).json({ error: 'اطلاعات ناقص است.' });
   try {
     const response = await axios.get('https://api.telegram.org/bot' + token + '/getMe');
@@ -346,12 +418,14 @@ app.post('/api/bot/create', (req, res, next) => { if(!req.session.auth) return r
     if (!db.bots) db.bots = {};
     const botId = uuidv4();
     const hostUrl = req.protocol + '://' + req.get('host');
-    db.bots[botId] = { id: botId, ownerId: ownerId.toString(), token, username: botInfo.username, status: 'active', hostUrl };
+    const isPublic = isPublicBot === true || isPublicBot === 'true';
+    db.bots[botId] = { id: botId, ownerId: ownerId.toString(), token, username: botInfo.username, status: 'active', hostUrl, public: isPublic };
     saveDB(db);
     startBot(db.bots[botId], hostUrl);
     res.json({ success: true, username: botInfo.username });
   } catch (err) { res.status(400).json({ error: 'توکن نامعتبر است.' }); }
 });
+
 app.post('/api/bot/delete/:id', (req, res, next) => { if(!req.session.auth) return res.status(401).json({error:'Unauthorized'}); next(); }, (req, res) => { const db = getDB(); const bot = db.bots[req.params.id]; if (bot) { stopBot(bot.token); delete db.bots[req.params.id]; saveDB(db); } res.json({ success: true }); });
 
 // --- PANEL API ---
@@ -362,7 +436,7 @@ app.post('/api/delete/:id', (req, res, next) => { if(!req.session.auth) return r
 // --- PUBLIC VIEW & PASSWORD PROTECT ---
 app.get('/view/:id', (req, res) => {
   const db = getDB(); const panel = db.panels[req.params.id];
-  if (!panel) return res.status(404).send(renderError('پنل یافت نشد 🌌'));
+  if (!panel) return res.status(404).send(renderBadRequest('پنل یافت نشد 🌌'));
   if (panel.status === 'paused') return res.status(403).send(renderError('این پنل متوقف شده است ⏸'));
   if (new Date() > new Date(panel.expires)) return res.status(403).send(renderError('زمان این پنل به پایان رسیده است ⏳'));
   
@@ -373,6 +447,7 @@ app.get('/view/:id', (req, res) => {
   panel.views = (panel.views || 0) + 1; saveDB(db);
   res.sendFile(path.join(UPLOAD_DIR, panel.file));
 });
+
 app.post('/view/:id', (req, res) => { const db = getDB(); const panel = db.panels[req.params.id]; if (panel && panel.password === req.body.password) { res.cookie('panel_' + panel.id, panel.password, { maxAge: 900000, httpOnly: true }); return res.redirect('/view/' + panel.id); } res.redirect('/view/' + panel.id + '?err=1'); });
 
 // --- EDIT CODE ---
@@ -382,7 +457,8 @@ app.post('/edit/:id', (req, res, next) => { if(!req.session.auth) return res.red
 // --- UI HELPERS ---
 function getTimeRemaining(iso) { const diff = new Date(iso) - new Date(); if (diff <= 0) return { text: 'پایان زمان', color: '#ef4444' }; const days = Math.floor(diff / 86400000); const hours = Math.floor((diff % 86400000) / 3600000); let color = '#10b981'; if (days < 3) color = '#f59e0b'; if (days < 1) color = '#ef4444'; return { text: days + ' روز و ' + hours + ' ساعت', color }; }
 function escapeHTML(str) { return str ? str.replace(/</g, '&lt;').replace(/>/g, '&gt;') : ''; }
-function renderError(msg) { return renderLayout('خطا', `<div class="login-wrap"><div class="glass-strong login-card fade-in-up" style="text-align:center;"><div style="font-size:60px; margin-bottom:16px;">🚫</div><h2 style="font-size:24px; font-weight:900; margin-bottom:12px; color:#ef4444;">${msg}</h2><a href="/" class="btn-neon" style="display:inline-block; text-decoration:none; width:auto; padding:12px 24px;">بازگشت</a></div></div>`); }
+function renderBadRequest(msg) { return `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="margin:0;background-color:#000000;color:#ffffff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;"><div style="font-size:24px;color:#f43f5e;font-weight:bold;">${msg || 'Bad Request'}</div></body></html>`; }
+function renderError(msg) { return renderBadRequest(msg); }
 
 function renderLayout(title, content, script = '') {
   return `<!DOCTYPE html><html lang="fa" dir="rtl" data-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} | Nebula</title><link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"><script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script><style>
